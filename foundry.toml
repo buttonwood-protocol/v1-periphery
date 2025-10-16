@@ -2,5 +2,45 @@
 src = "src"
 out = "out"
 libs = ["lib"]
+optimizer-runs = 10_000
+
+# Create additional compiler profiles to satisfy compilation restrictions
+additional_compiler_profiles = [
+    { name = "low-opt", optimizer = true, optimizer_runs = 500 }
+]
+
+compilation_restrictions = [
+    { paths = "../contracts/src/LoanManager.sol", optimizer_runs = 500 },
+    { paths = "../contracts/src/GeneralManager.sol", optimizer_runs = 500 },
+]
+
+fs_permissions = [
+  { access = "read", path = "../contracts/addresses/addresses-31337.json"},
+  { access = "read", path = "../contracts/addresses/addresses-998.json"},
+  { access = "read", path = "../contracts/addresses/addresses-999.json"},
+  { access = "read-write", path = "./addresses/addresses-31337.json"},
+  { access = "read-write", path = "./addresses/addresses-998.json"},
+  { access = "read-write", path = "./addresses/addresses-999.json"},
+  { access = "read", path = "./test/artifacts/WHYPE9.json"}
+]
+
+[profile.coverage]
+via_ir = false
+optimizer = false
+optimizer_runs = 1_000
+
+[dependencies]
+core = "../contracts"
+
+[fmt]
+tab_width = 2
+
+[etherscan]
+  hyperliquid = { key = "${API_KEY_ETHERSCAN}" }
+
+[rpc_endpoints]
+  hyperliquid = "https://rpc.hyperliquid.xyz/evm"
+  hyperliquid-testnet = "https://rpc.hyperliquid-testnet.xyz/evm"
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+

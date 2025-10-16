@@ -1,0 +1,17 @@
+{
+  "name": "@repo/periphery-contracts",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "echo 'Add dev script here'",
+    "build": "forge build",
+    "test": "forge test",
+    "lint": "forge fmt",
+    "solhint": "solhint 'src/**/*.sol'",
+    "local-deploy": "./utils/local-deploy.sh",
+    "lintspec": "./utils/watch-and-run.sh ./src 'lintspec ./src --compact --sort'"
+  },
+  "devDependencies": {
+    "solhint": "^5.1.0"
+  }
+}
