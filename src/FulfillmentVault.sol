@@ -39,7 +39,8 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
    * @dev keccak256(abi.encode(uint256(keccak256("buttonwood.storage.FulfillmentVault")) - 1)) & ~bytes32(uint256(0xff))
    */
   // solhint-disable-next-line const-name-snakecase
-  bytes32 private constant FulfillmentVaultStorageLocation = 0x4b57f16710661390ada38fe64129442a589f51d339ba23973c82ad806b168200;
+  bytes32 private constant FulfillmentVaultStorageLocation =
+    0x4b57f16710661390ada38fe64129442a589f51d339ba23973c82ad806b168200;
 
   /**
    * @dev Gets the storage location of the FulfillmentVault contract
@@ -56,7 +57,15 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
    * @dev Initializes the FulfillmentVault contract and calls parent initializers
    */
   // solhint-disable-next-line func-name-mixedcase
-  function __FulfillmentVault_init(string memory name, string memory symbol, uint8 _decimals, uint8 _decimalsOffset, address _usdx, address _wrappedNativeToken, address _orderPool) internal onlyInitializing {
+  function __FulfillmentVault_init(
+    string memory name,
+    string memory symbol,
+    uint8 _decimals,
+    uint8 _decimalsOffset,
+    address _usdx,
+    address _wrappedNativeToken,
+    address _orderPool
+  ) internal onlyInitializing {
     __ERC20_init_unchained(name, symbol);
     __LiquidityVault_init_unchained(_decimals, _decimalsOffset, _usdx, _usdx);
     __FulfillmentVault_init_unchained(_wrappedNativeToken, _orderPool);
@@ -81,18 +90,21 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
    * @param _wrappedNativeToken The address of the wrapped native token
    * @param _orderPool The address of the order pool
    */
-  function initialize(string memory name, string memory symbol, uint8 _decimals, uint8 _decimalsOffset, address _usdx, address _wrappedNativeToken, address _orderPool) external initializer {
+  function initialize(
+    string memory name,
+    string memory symbol,
+    uint8 _decimals,
+    uint8 _decimalsOffset,
+    address _usdx,
+    address _wrappedNativeToken,
+    address _orderPool
+  ) external initializer {
     __FulfillmentVault_init(name, symbol, _decimals, _decimalsOffset, _usdx, _wrappedNativeToken, _orderPool);
     _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
   }
-  
+
   /// @inheritdoc IERC165
-  function supportsInterface(bytes4 interfaceId)
-    public
-    view
-    override(LiquidityVault)
-    returns (bool)
-  {
+  function supportsInterface(bytes4 interfaceId) public view override(LiquidityVault) returns (bool) {
     return super.supportsInterface(interfaceId) || interfaceId == type(IFulfillmentVault).interfaceId;
   }
 
@@ -119,7 +131,7 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
 
   function _buyHypeOnCore(uint256 amount) internal virtual {
     revert("Not implemented");
-    // Get storage 
+    // Get storage
     FulfillmentVaultStorage storage $ = _getFulfillmentVaultStorage();
     // Place an IOC limit order to trade usdc for hype on core
     // ToDo: Figure out asset, limitPx, and sz
@@ -128,7 +140,6 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
     //     uint64 sz,
     // CoreWriterLib.placeLimitOrder(asset, true, limitPx, sz, false, 3, $._nonce);
     $._nonce++;
-    
   }
 
   function _bridgeHypeFromCoreToEvm(uint256 amount) internal virtual {
@@ -162,7 +173,7 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
 
   function _tradeUsdTokensToUsdcOnCore(address token, uint256 amount) internal virtual {
     revert("Not implemented");
-    // Get storage 
+    // Get storage
     FulfillmentVaultStorage storage $ = _getFulfillmentVaultStorage();
     // Place an IOC limit order to trade usd tokens for usdc on core
     // ToDo: Figure out asset, limitPx, and sz
@@ -177,11 +188,11 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
     _burnUsdx(amount);
   }
 
-  function bridgeUsdTokenToCore(address token, uint256 amount) external override whenPaused{
+  function bridgeUsdTokenToCore(address token, uint256 amount) external override onlyRole(KEEPER_ROLE) whenPaused {
     _bridgeUsdTokenToCore(token, amount);
   }
 
-  function burnUsdxAndBridgeToCore(uint256 amount) external override whenPaused{
+  function burnUsdxAndBridgeToCore(uint256 amount) external override onlyRole(KEEPER_ROLE) whenPaused {
     _burnUsdx(amount);
     address[] memory usdTokens = IUSDX(redeemableAsset()).getSupportedTokens();
     for (uint256 i = 0; i < usdTokens.length; i++) {

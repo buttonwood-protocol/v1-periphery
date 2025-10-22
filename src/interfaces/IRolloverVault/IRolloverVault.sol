@@ -8,9 +8,7 @@ import {ILiquidityVault} from "../ILiquidityVault/ILiquidityVault.sol";
  * @author @SocksNFlops
  * @notice Interface for RolloverVault, a vault that facilitates automatically rotates unused assets into origination pools.
  */
-interface IRolloverVault is ILiquidityVault {
-}
-
+interface IRolloverVault is ILiquidityVault {}
 
 /**
  * RolloverVault:

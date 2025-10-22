@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.20;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, console} from "forge-std/Test.sol";
 import {GeneralManager} from "@core/GeneralManager.sol";
 import {IGeneralManager} from "@core/interfaces/IGeneralManager/IGeneralManager.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -14,7 +14,6 @@ import {IUSDX} from "@core/interfaces/IUSDX/IUSDX.sol";
 import {USDX} from "@core/USDX.sol";
 import {Consol} from "@core/Consol.sol";
 import {SubConsol} from "@core/SubConsol.sol";
-import {MockERC20} from "./mocks/MockERC20.sol";
 import {OriginationPoolScheduler} from "@core/OriginationPoolScheduler.sol";
 import {IOriginationPoolScheduler} from "@core/interfaces/IOriginationPoolScheduler/IOriginationPoolScheduler.sol";
 import {IWNT} from "../src/interfaces/IWNT.sol";
@@ -51,6 +50,11 @@ contract BaseTest is Test {
   address public fulfiller = makeAddr("fulfiller");
   address public rando = makeAddr("rando");
 
+  // Mainnet Addresses
+  address public USDT0_ADDRESS = 0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb;
+  address public USDH0_ADDRESS = 0x111111a1a0667d36bD57c0A9f569b98057111111;
+  address public UBTC_ADDRESS = 0x9FDBdA0A5e284c32744D2f17Ee5c74B284993463;
+
   // Tokens
   IERC20 public usdt;
   IERC20 public usdh;
@@ -58,9 +62,9 @@ contract BaseTest is Test {
   ForfeitedAssetsPool public forfeitedAssetsPool;
   IConsol public consol;
   IWNT public whype;
-  IERC20 public wbtc;
+  IERC20 public ubtc;
   ISubConsol public whypeSubConsol;
-  ISubConsol public wbtcSubConsol;
+  ISubConsol public ubtcSubConsol;
   // Arguments
   address public insuranceFund = makeAddr("insuranceFund");
   uint16 public penaltyRate = 50;
@@ -72,14 +76,14 @@ contract BaseTest is Test {
   IOriginationPoolScheduler public originationPoolScheduler;
   IOriginationPool public originationPool;
   IPriceOracle public whypePriceOracle;
-  IPriceOracle public wbtcPriceOracle;
+  IPriceOracle public ubtcPriceOracle;
   IInterestRateOracle public interestRateOracle;
   ILoanManager public loanManager;
   IMortgageNFT public mortgageNFT;
   INFTMetadataGenerator public nftMetadataGenerator;
   IOrderPool public orderPool;
   IConversionQueue public whypeConversionQueue;
-  IConversionQueue public wbtcConversionQueue;
+  IConversionQueue public ubtcConversionQueue;
   // Pyth
   IPyth public pyth;
   // OPool Config
@@ -101,8 +105,9 @@ contract BaseTest is Test {
 
   function _deployWHype() internal {
     // Deploy the WHYPE to the 0x555... address
-    deployCodeTo("test/artifacts/WHYPE9.json", WHYPE_ADDRESS);
+    // deployCodeTo("test/artifacts/WHYPE9.json", WHYPE_ADDRESS);
     whype = IWNT(WHYPE_ADDRESS);
+    vm.label(address(whype), "WHYPE");
   }
 
   function _createGeneralManager() internal {
@@ -171,10 +176,10 @@ contract BaseTest is Test {
 
   function _createUSDX() internal {
     // Make usdt
-    usdt = new MockERC20("Tether USD", "USDT", 6);
+    usdt = IERC20(USDT0_ADDRESS);
     vm.label(address(usdt), "USDT");
     // Make usdh
-    usdh = new MockERC20("USD+", "USDH", 6);
+    usdh = IERC20(USDH0_ADDRESS);
     vm.label(address(usdh), "USDH");
     // Make usdx
     usdx = new USDX("USDX", "USDX", 18, admin);
@@ -187,15 +192,15 @@ contract BaseTest is Test {
   }
 
   function _setupCollaterals() internal {
-    wbtc = new MockERC20("Wrapped Bitcoin", "WBTC", 8);
-    vm.label(address(wbtc), "WBTC");
+    ubtc = IERC20(UBTC_ADDRESS);
+    vm.label(address(ubtc), "UBTC");
   }
 
   function _createSubConsols() internal {
     // whype first
     whypeSubConsol = new SubConsol("WHYPE SubConsol", "WHYPE-SUBCONSOL", address(admin), address(whype));
-    // wbtc second
-    wbtcSubConsol = new SubConsol("Bitcoin SubConsol", "BTC-SUBCONSOL", address(admin), address(wbtc));
+    // ubtc second
+    ubtcSubConsol = new SubConsol("UBTC SubConsol", "UBTC-SUBCONSOL", address(admin), address(ubtc));
   }
 
   function _createConsol() internal {
@@ -205,7 +210,7 @@ contract BaseTest is Test {
     IAccessControl(address(consol)).grantRole(Roles.SUPPORTED_TOKEN_ROLE, admin);
     consol.addSupportedToken(address(usdx));
     consol.addSupportedToken(address(whypeSubConsol));
-    consol.addSupportedToken(address(wbtcSubConsol));
+    consol.addSupportedToken(address(ubtcSubConsol));
     vm.stopPrank();
   }
 
@@ -246,11 +251,11 @@ contract BaseTest is Test {
       address(generalManager),
       admin
     );
-    // Create the WBTC conversion queue
-    wbtcConversionQueue = new ConversionQueue(
-      address(wbtc),
-      IERC20Metadata(address(wbtc)).decimals(),
-      address(wbtcSubConsol),
+    // Create the UBTC conversion queue
+    ubtcConversionQueue = new ConversionQueue(
+      address(ubtc),
+      IERC20Metadata(address(ubtc)).decimals(),
+      address(ubtcSubConsol),
       address(consol),
       address(generalManager),
       admin
@@ -259,32 +264,32 @@ contract BaseTest is Test {
     // Have the admin grant the consol's withdraw role to the conversion queue contract
     vm.startPrank(admin);
     IAccessControl(address(consol)).grantRole(Roles.WITHDRAW_ROLE, address(whypeConversionQueue));
-    IAccessControl(address(consol)).grantRole(Roles.WITHDRAW_ROLE, address(wbtcConversionQueue));
+    IAccessControl(address(consol)).grantRole(Roles.WITHDRAW_ROLE, address(ubtcConversionQueue));
     vm.stopPrank();
 
     // Have the admin grant the SubConsol's withdraw role to the conversion queue contract
     vm.startPrank(admin);
     IAccessControl(address(whypeSubConsol)).grantRole(Roles.ACCOUNTING_ROLE, address(whypeConversionQueue));
-    IAccessControl(address(wbtcSubConsol)).grantRole(Roles.ACCOUNTING_ROLE, address(wbtcConversionQueue));
+    IAccessControl(address(ubtcSubConsol)).grantRole(Roles.ACCOUNTING_ROLE, address(ubtcConversionQueue));
     vm.stopPrank();
 
     // Have GeneralManager grant the CONVERSION_ROLE to the conversion queue
     vm.startPrank(admin);
     IAccessControl(address(generalManager)).grantRole(Roles.CONVERSION_ROLE, address(whypeConversionQueue));
-    IAccessControl(address(generalManager)).grantRole(Roles.CONVERSION_ROLE, address(wbtcConversionQueue));
+    IAccessControl(address(generalManager)).grantRole(Roles.CONVERSION_ROLE, address(ubtcConversionQueue));
     vm.stopPrank();
   }
 
   function _setupOracles() internal {
     interestRateOracle = new MockInterestRateOracle();
     whypePriceOracle = new MockPriceOracle(18);
-    wbtcPriceOracle = new MockPriceOracle(8);
+    ubtcPriceOracle = new MockPriceOracle(8);
 
     // Set the oracles in the GM
     vm.startPrank(admin);
     generalManager.setInterestRateOracle(address(interestRateOracle));
     generalManager.setPriceOracle(address(whype), address(whypePriceOracle));
-    generalManager.setPriceOracle(address(wbtc), address(wbtcPriceOracle));
+    generalManager.setPriceOracle(address(ubtc), address(ubtcPriceOracle));
     vm.stopPrank();
   }
 
@@ -300,9 +305,9 @@ contract BaseTest is Test {
     generalManager.setMinimumCap(address(whype), 1e18); // Minimum cap of $1
     generalManager.setMaximumCap(address(whype), 10_000e18); // Maximum cap of $10k
 
-    // WBTC limits
-    generalManager.setMinimumCap(address(wbtc), 1e18); // Minimum cap of $1
-    generalManager.setMaximumCap(address(wbtc), 10_000e18); // Maximum cap of $10k
+    // UBTC limits
+    generalManager.setMinimumCap(address(ubtc), 1e18); // Minimum cap of $1
+    generalManager.setMaximumCap(address(ubtc), 10_000e18); // Maximum cap of $10k
     vm.stopPrank();
   }
 
@@ -310,7 +315,7 @@ contract BaseTest is Test {
     // Skip 55 years into the future
     skip((31557600) * 55);
 
-    // Deploy the WHYPE and other collaterals (wbtc)
+    // Deploy the WHYPE and other collaterals (ubtc)
     _deployWHype();
     _setupCollaterals();
 

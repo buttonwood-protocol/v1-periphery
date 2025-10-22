@@ -7,7 +7,6 @@ pragma solidity ^0.8.20;
  * @notice Interface for events emitted by LiquidityVaults.
  */
 interface ILiquidityVaultEvents {
-
   /**
    * @notice Emitted when a user deposits assets into the vault.
    * @param user The address of the user who deposited the assets.
@@ -15,7 +14,9 @@ interface ILiquidityVaultEvents {
    * @param amountDeposited The amount of depositable asset sent.
    * @param sharesMinted The amount of shares minted.
    */
-  event Deposited(address indexed user, address indexed depositableAsset, uint256 amountDeposited, uint256 sharesMinted);
+  event Deposited(
+    address indexed user, address indexed depositableAsset, uint256 amountDeposited, uint256 sharesMinted
+  );
 
   /**
    * @notice Emitted when a user redeems assets from the vault.

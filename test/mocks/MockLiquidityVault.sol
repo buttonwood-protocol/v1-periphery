@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.20;
 
-import {LiquidityVault} from "../../src/LiquidityVault.sol";  
+import {LiquidityVault} from "../../src/LiquidityVault.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract MockLiquidityVault is LiquidityVault {
-
   function _totalAssets() internal view override returns (uint256) {
     return IERC20(depositableAsset()).balanceOf(address(this)) + IERC20(redeemableAsset()).balanceOf(address(this));
   }

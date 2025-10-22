@@ -16,7 +16,6 @@ import {MockLiquidityVault2} from "./mocks/MockLiquidityVault2.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 
 contract LiquidityVaultTest is Test {
-
   string NAME = "Test Liquidity Vault";
   string SYMBOL = "TLV";
   uint8 DECIMALS = 26; // ToDo: Make this 8 + depositableAsset decimals????
@@ -54,7 +53,15 @@ contract LiquidityVaultTest is Test {
     vm.label(address(redeemableAsset), "Redeemable Asset");
 
     MockLiquidityVault liquidityVaultImplementation = new MockLiquidityVault();
-    bytes memory initializerData = abi.encodeWithSelector(LiquidityVault.initialize.selector, NAME, SYMBOL, DECIMALS, DECIMALS_OFFSET, address(depositableAsset), address(redeemableAsset));
+    bytes memory initializerData = abi.encodeWithSelector(
+      LiquidityVault.initialize.selector,
+      NAME,
+      SYMBOL,
+      DECIMALS,
+      DECIMALS_OFFSET,
+      address(depositableAsset),
+      address(redeemableAsset)
+    );
     vm.startPrank(admin);
     ERC1967Proxy proxy = new ERC1967Proxy(address(liquidityVaultImplementation), initializerData);
     vm.stopPrank();
@@ -86,15 +93,20 @@ contract LiquidityVaultTest is Test {
     assertTrue(liquidityVault.supportsInterface(type(ILiquidityVault).interfaceId), "Should support ILiquidityVault");
     assertTrue(liquidityVault.supportsInterface(type(IERC165).interfaceId), "Should support IERC165");
     assertTrue(liquidityVault.supportsInterface(type(IAccessControl).interfaceId), "Should support IAccessControl");
-    assertTrue(liquidityVault.supportsInterface(type(IERC1822Proxiable).interfaceId), "Should support IERC1822Proxiable");
+    assertTrue(
+      liquidityVault.supportsInterface(type(IERC1822Proxiable).interfaceId), "Should support IERC1822Proxiable"
+    );
     assertTrue(liquidityVault.supportsInterface(type(IERC20).interfaceId), "Should support IERC20");
     assertTrue(liquidityVault.supportsInterface(type(IERC20Metadata).interfaceId), "Should support IERC20Metadata");
-    
   }
 
   function test_supportedInterfaces_invalid(bytes4 interfaceId) public view {
     // Make sure it's not one of the valid interfaces
-    vm.assume(interfaceId != type(ILiquidityVault).interfaceId && interfaceId != type(IERC165).interfaceId && interfaceId != type(IAccessControl).interfaceId && interfaceId != type(IERC1822Proxiable).interfaceId && interfaceId != type(IERC20).interfaceId && interfaceId != type(IERC20Metadata).interfaceId);
+    vm.assume(
+      interfaceId != type(ILiquidityVault).interfaceId && interfaceId != type(IERC165).interfaceId
+        && interfaceId != type(IAccessControl).interfaceId && interfaceId != type(IERC1822Proxiable).interfaceId
+        && interfaceId != type(IERC20).interfaceId && interfaceId != type(IERC20Metadata).interfaceId
+    );
     assertFalse(liquidityVault.supportsInterface(interfaceId), "Should not support invalid interface");
   }
 
@@ -108,7 +120,9 @@ contract LiquidityVaultTest is Test {
     // Attempt to upgrade to the new implementation as a non-admin
     vm.startPrank(caller);
     vm.expectRevert(
-      abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, caller, liquidityVault.DEFAULT_ADMIN_ROLE())
+      abi.encodeWithSelector(
+        IAccessControl.AccessControlUnauthorizedAccount.selector, caller, liquidityVault.DEFAULT_ADMIN_ROLE()
+      )
     );
     liquidityVault.upgradeToAndCall(address(newImplementation), "");
     vm.stopPrank();
@@ -137,7 +151,9 @@ contract LiquidityVaultTest is Test {
     // Attempt to set paused as a non-admin
     vm.startPrank(caller);
     vm.expectRevert(
-      abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, caller, liquidityVault.KEEPER_ROLE())
+      abi.encodeWithSelector(
+        IAccessControl.AccessControlUnauthorizedAccount.selector, caller, liquidityVault.KEEPER_ROLE()
+      )
     );
     liquidityVault.setPaused(true);
     vm.stopPrank();
@@ -172,7 +188,11 @@ contract LiquidityVaultTest is Test {
 
     // Attempt to set whitelist enforced as a non-admin
     vm.startPrank(caller);
-    vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, caller, liquidityVault.DEFAULT_ADMIN_ROLE()));
+    vm.expectRevert(
+      abi.encodeWithSelector(
+        IAccessControl.AccessControlUnauthorizedAccount.selector, caller, liquidityVault.DEFAULT_ADMIN_ROLE()
+      )
+    );
     liquidityVault.setWhitelistEnforced(whitelistEnforced);
     vm.stopPrank();
   }
@@ -189,7 +209,9 @@ contract LiquidityVaultTest is Test {
     vm.stopPrank();
 
     // Validate that the whitelist enforced is set
-    assertEq(liquidityVault.whitelistEnforced(), whitelistEnforced, "Whitelist enforced should be set to the value passed in");
+    assertEq(
+      liquidityVault.whitelistEnforced(), whitelistEnforced, "Whitelist enforced should be set to the value passed in"
+    );
   }
 
   function test_deposit_revertWhenPaused(uint256 amount) public {
@@ -216,7 +238,11 @@ contract LiquidityVaultTest is Test {
 
     // Attempt to deposit when the liquidityVault is whitelist enforced and the caller is not whitelisted
     vm.startPrank(caller);
-    vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, caller, liquidityVault.WHITELIST_ROLE()));
+    vm.expectRevert(
+      abi.encodeWithSelector(
+        IAccessControl.AccessControlUnauthorizedAccount.selector, caller, liquidityVault.WHITELIST_ROLE()
+      )
+    );
     liquidityVault.deposit(depositAmount);
     vm.stopPrank();
   }
@@ -240,9 +266,21 @@ contract LiquidityVaultTest is Test {
     vm.stopPrank();
 
     // Validate that the user has deposited the depositAmount of depositableAsset into the liquidityVault
-    assertEq(liquidityVault.totalAssets(), PRIME_AMOUNT + depositAmount, "Total assets should have increased by the deposit amount");
-    assertEq(liquidityVault.balanceOf(user), depositAmount * (10 ** DECIMALS_OFFSET), "Balance of user should be equal to the deposit amount * decimalsOffset");
-    assertEq(depositableAsset.balanceOf(address(liquidityVault)), PRIME_AMOUNT + depositAmount, "Depositable asset balance of liquidityVault should be equal to the prime amount plus the deposit amount");
+    assertEq(
+      liquidityVault.totalAssets(),
+      PRIME_AMOUNT + depositAmount,
+      "Total assets should have increased by the deposit amount"
+    );
+    assertEq(
+      liquidityVault.balanceOf(user),
+      depositAmount * (10 ** DECIMALS_OFFSET),
+      "Balance of user should be equal to the deposit amount * decimalsOffset"
+    );
+    assertEq(
+      depositableAsset.balanceOf(address(liquidityVault)),
+      PRIME_AMOUNT + depositAmount,
+      "Depositable asset balance of liquidityVault should be equal to the prime amount plus the deposit amount"
+    );
     assertEq(depositableAsset.balanceOf(user), 0, "Depositable asset balance of user should be 0");
   }
 
@@ -261,9 +299,21 @@ contract LiquidityVaultTest is Test {
     vm.stopPrank();
 
     // Validate that the user has deposited the depositAmount of depositableAsset into the liquidityVault
-    assertEq(liquidityVault.totalAssets(), PRIME_AMOUNT + depositAmount, "Total assets should have increased by the deposit amount");
-    assertEq(liquidityVault.balanceOf(user), depositAmount * (10 ** DECIMALS_OFFSET), "Balance of user should be equal to the deposit amount * decimalsOffset");
-    assertEq(depositableAsset.balanceOf(address(liquidityVault)), PRIME_AMOUNT + depositAmount, "Depositable asset balance of liquidityVault should be equal to the prime amount plus the deposit amount");
+    assertEq(
+      liquidityVault.totalAssets(),
+      PRIME_AMOUNT + depositAmount,
+      "Total assets should have increased by the deposit amount"
+    );
+    assertEq(
+      liquidityVault.balanceOf(user),
+      depositAmount * (10 ** DECIMALS_OFFSET),
+      "Balance of user should be equal to the deposit amount * decimalsOffset"
+    );
+    assertEq(
+      depositableAsset.balanceOf(address(liquidityVault)),
+      PRIME_AMOUNT + depositAmount,
+      "Depositable asset balance of liquidityVault should be equal to the prime amount plus the deposit amount"
+    );
     assertEq(depositableAsset.balanceOf(user), 0, "Depositable asset balance of user should be 0");
   }
 
@@ -302,8 +352,14 @@ contract LiquidityVaultTest is Test {
     vm.stopPrank();
 
     // Confirm that the liquidityVault has 0 depositableAsset and depositAmount redeemableAsset
-    assertEq(depositableAsset.balanceOf(address(liquidityVault)), 0, "Depositable asset balance of liquidityVault should be 0");
-    assertEq(redeemableAsset.balanceOf(address(liquidityVault)), PRIME_AMOUNT + depositAmount, "Redeemable asset balance of liquidityVault should be equal to the prime amount plus the deposit amount");
+    assertEq(
+      depositableAsset.balanceOf(address(liquidityVault)), 0, "Depositable asset balance of liquidityVault should be 0"
+    );
+    assertEq(
+      redeemableAsset.balanceOf(address(liquidityVault)),
+      PRIME_AMOUNT + depositAmount,
+      "Redeemable asset balance of liquidityVault should be equal to the prime amount plus the deposit amount"
+    );
 
     // User redeems their entire balance of the liquidityVault
     vm.startPrank(user);
@@ -315,5 +371,4 @@ contract LiquidityVaultTest is Test {
     assertEq(depositableAsset.balanceOf(user), 0, "Depositable asset balance of user should be 0");
     assertEq(redeemableAsset.balanceOf(user), depositAmount, "Redeemable asset balance of user should be depositAmount");
   }
-  
 }

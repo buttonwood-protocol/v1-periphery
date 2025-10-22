@@ -11,14 +11,21 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  * @author @SocksNFlops
  * @notice The RolloverVault contract used to automatically rotate unused assets into origination pools.
  */
-contract RolloverVault is LiquidityVault{
+contract RolloverVault is LiquidityVault {
   using Math for uint256;
 
   /**
    * @dev Initializes the FulfillmentVault contract and calls parent initializers
    */
   // solhint-disable-next-line func-name-mixedcase
-  function __FulfillmentVault_init(string memory name, string memory symbol, uint8 _decimals, uint8 _decimalsOffset, address _depositableAsset, address _redeemableAsset) internal onlyInitializing {
+  function __FulfillmentVault_init(
+    string memory name,
+    string memory symbol,
+    uint8 _decimals,
+    uint8 _decimalsOffset,
+    address _depositableAsset,
+    address _redeemableAsset
+  ) internal onlyInitializing {
     __ERC20_init_unchained(name, symbol);
     __LiquidityVault_init_unchained(_decimals, _decimalsOffset, _depositableAsset, _redeemableAsset);
   }
@@ -38,7 +45,14 @@ contract RolloverVault is LiquidityVault{
    * @param _depositableAsset The address of the depositable asset
    * @param _redeemableAsset The address of the redeemable asset
    */
-  function initialize(string memory name, string memory symbol, uint8 _decimals, uint8 _decimalsOffset, address _depositableAsset, address _redeemableAsset) external override initializer {
+  function initialize(
+    string memory name,
+    string memory symbol,
+    uint8 _decimals,
+    uint8 _decimalsOffset,
+    address _depositableAsset,
+    address _redeemableAsset
+  ) external override initializer {
     __FulfillmentVault_init(name, symbol, _decimals, _decimalsOffset, _depositableAsset, _redeemableAsset);
     __LiquidityVault_init_unchained(_decimals, _decimalsOffset, _depositableAsset, _redeemableAsset);
     _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
@@ -50,12 +64,7 @@ contract RolloverVault is LiquidityVault{
   }
 
   /// @inheritdoc IERC165
-  function supportsInterface(bytes4 interfaceId)
-    public
-    view
-    override(LiquidityVault)
-    returns (bool)
-  {
+  function supportsInterface(bytes4 interfaceId) public view override(LiquidityVault) returns (bool) {
     return super.supportsInterface(interfaceId) || interfaceId == type(IFulfillmentVault).interfaceId;
   }
 
@@ -65,7 +74,6 @@ contract RolloverVault is LiquidityVault{
    */
   // solhint-disable-next-line no-empty-blocks
   function _authorizeUpgrade(address newImplementation) internal virtual override onlyRole(DEFAULT_ADMIN_ROLE) {}
-
 
   /// @inheritdoc LiquidityVault
   function _totalAssets() internal view override returns (uint256) {

@@ -60,7 +60,8 @@ abstract contract LiquidityVault is
    * @dev keccak256(abi.encode(uint256(keccak256("buttonwood.storage.LiquidityVault")) - 1)) & ~bytes32(uint256(0xff))
    */
   // solhint-disable-next-line const-name-snakecase
-  bytes32 private constant LiquidityVaultStorageLocation = 0x279d7268e134fe9470212f64c617da0df55170c0eafa03169b80558ce404b000;
+  bytes32 private constant LiquidityVaultStorageLocation =
+    0x279d7268e134fe9470212f64c617da0df55170c0eafa03169b80558ce404b000;
 
   /**
    * @dev Gets the storage location of the LiquidityVault contract
@@ -77,7 +78,14 @@ abstract contract LiquidityVault is
    * @dev Initializes the LiquidityVault contract and calls parent initializers
    */
   // solhint-disable-next-line func-name-mixedcase
-  function __LiquidityVault_init(string memory name, string memory symbol, uint8 _decimals, uint8 _decimalsOffset, address _depositableAsset, address _redeemableAsset) internal onlyInitializing {
+  function __LiquidityVault_init(
+    string memory name,
+    string memory symbol,
+    uint8 _decimals,
+    uint8 _decimalsOffset,
+    address _depositableAsset,
+    address _redeemableAsset
+  ) internal onlyInitializing {
     __ERC20_init_unchained(name, symbol);
     __LiquidityVault_init_unchained(_decimals, _decimalsOffset, _depositableAsset, _redeemableAsset);
   }
@@ -86,7 +94,12 @@ abstract contract LiquidityVault is
    * @dev Initializes the LiquidityVault contract only
    */
   // solhint-disable-next-line func-name-mixedcase
-  function __LiquidityVault_init_unchained(uint8 _decimals, uint8 _decimalsOffset, address _depositableAsset, address _redeemableAsset) internal onlyInitializing {
+  function __LiquidityVault_init_unchained(
+    uint8 _decimals,
+    uint8 _decimalsOffset,
+    address _depositableAsset,
+    address _redeemableAsset
+  ) internal onlyInitializing {
     LiquidityVaultStorage storage $ = _getLiquidityVaultStorage();
     $._decimals = _decimals;
     $._decimalsOffset = _decimalsOffset;
@@ -104,7 +117,14 @@ abstract contract LiquidityVault is
    * @param _depositableAsset The address of the depositable asset
    * @param _redeemableAsset The address of the redeemable asset
    */
-  function initialize(string memory name, string memory symbol, uint8 _decimals, uint8 _decimalsOffset, address _depositableAsset, address _redeemableAsset) external virtual initializer {
+  function initialize(
+    string memory name,
+    string memory symbol,
+    uint8 _decimals,
+    uint8 _decimalsOffset,
+    address _depositableAsset,
+    address _redeemableAsset
+  ) external virtual initializer {
     __LiquidityVault_init(name, symbol, _decimals, _decimalsOffset, _depositableAsset, _redeemableAsset);
     _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
   }
