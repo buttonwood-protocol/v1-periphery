@@ -28,24 +28,60 @@ interface IFulfillmentVault is ILiquidityVault {
   function nonce() external view returns (uint128);
 
   /**
+   * @notice Approves whype to the order pool
+   */
+  function approveWhype() external;
+
+  /**
+   * @notice Wraps entire hype balance of the fulfillment vault into whype
+   */
+  function wrapHype() external;
+
+  /**
+   * @notice Bridges hype from core to evm
+   * @param amount The amount of hype to bridge (in evm units)
+   */
+  function bridgeHypeFromCoreToEvm(uint256 amount) external;
+
+  /**
    * @notice Burns USDX into usdTokens for the purpose of transferring them to core
    * @param amount The amount of USDX to burn
    */
   function burnUsdx(uint256 amount) external;
 
-  /**
-   * @notice Bridges usdTokens to core
-   * @param token The address of the usdToken to bridge
-   * @param amount The amount of usdToken to bridge
-   */
-  function bridgeUsdTokenToCore(address token, uint256 amount) external;
 
   /**
-   * @notice Burns USDX and bridges the usdTokens to core
-   * @param amount The amount of USDX to burn
+   * @notice Withdraws usdToken from usdx
+   * @param usdToken The address of the usdToken to withdraw
+   * @param amount The amount of usdToken to withdraw
    */
-  function burnUsdxAndBridgeToCore(uint256 amount) external;
+  function withdrawUsdTokenFromUsdx(address usdToken, uint256 amount) external;
+
+  /**
+   * @notice Bridges usdTokens to core
+   * @param usdToken The address of the usdToken to bridge
+   * @param amount The amount of usdToken to bridge
+   */
+  function bridgeUsdTokenToCore(address usdToken, uint256 amount) external;
+
+  /**
+   * @notice Trades tokens on core
+   * @param asset The assetId of the asset to trade
+   * @param isBuy Whether to buy or sell
+   * @param limitPx The limit price. Note, This is is (weiUnits - szUnits). For USDT and USDH, weiUnits is 1e6.
+   * @param sz The size of the trade. Note, this is in szUnits. For USDT and USDH, szUnits is 1e2.
+   */
+  function tradeOnCore(uint32 asset, bool isBuy, uint32 limitPx, uint64 sz) external;
+
+  /**
+   * @notice Fills an order from the order pool
+   * @param index The index of the order to fill
+   * @param hintPrevIds The hint prev ids for the relevant mortgage queues.
+   */
+  function fillOrder(uint256 index, uint256[] memory hintPrevIds) external;
 }
+
+// ToDo: GENERALIZE TO BUYING MORE THAN JUST HYPE
 
 /**
  * FulfillmentVault:

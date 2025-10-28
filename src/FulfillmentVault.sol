@@ -21,6 +21,9 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
   using Math for uint256;
   using CoreWriterLib for *;
 
+  /// @notice Allow the contract to receive ETH (HYPE bridged from Core)
+  receive() external payable {}
+
   /**
    * @custom:storage-location erc7201:buttonwood.storage.FulfillmentVault
    * @notice The storage for the FulfillmentVault contract
@@ -129,76 +132,55 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
     return _getFulfillmentVaultStorage()._nonce;
   }
 
-  function _buyHypeOnCore(uint256 amount) internal virtual {
-    revert("Not implemented");
-    // Get storage
-    FulfillmentVaultStorage storage $ = _getFulfillmentVaultStorage();
-    // Place an IOC limit order to trade usdc for hype on core
-    // ToDo: Figure out asset, limitPx, and sz
-    //     uint32 asset,
-    //     uint64 limitPx,
-    //     uint64 sz,
-    // CoreWriterLib.placeLimitOrder(asset, true, limitPx, sz, false, 3, $._nonce);
-    $._nonce++;
+  /// @inheritdoc IFulfillmentVault
+  /// @dev Does not need a keeper role or paused-state
+  function approveWhype() external {
+    IWNT(wrappedNativeToken()).approve(orderPool(), type(uint256).max);
   }
 
-  function _bridgeHypeFromCoreToEvm(uint256 amount) internal virtual {
+  /// @inheritdoc IFulfillmentVault
+  /// @dev Does not need a keeper role or paused-state
+  function wrapHype() external {
+    IWNT(wrappedNativeToken()).deposit{value: address(this).balance}();
+  }
+
+  /// @inheritdoc IFulfillmentVault
+  function bridgeHypeFromCoreToEvm(uint256 amount) external override onlyRole(KEEPER_ROLE) whenPaused 
+  {
     CoreWriterLib.bridgeToEvm(HLConstants.hypeTokenIndex(), amount, true);
   }
 
-  function _wrapHype(uint256 amount) internal virtual {
-    IWNT(wrappedNativeToken()).deposit{value: amount}();
+  /// @inheritdoc IFulfillmentVault
+  function burnUsdx(uint256 amount) external override onlyRole(KEEPER_ROLE) whenPaused {
+    IUSDX(redeemableAsset()).burn(amount);
   }
 
-  function _approveWhype(uint256 amount) internal virtual {
-    IWNT(wrappedNativeToken()).approve(orderPool(), amount);
+  // @inheritdoc IFulfillmentVault
+  function withdrawUsdTokenFromUsdx(address usdToken, uint256 amount) external override onlyRole(KEEPER_ROLE) whenPaused {
+    IUSDX(redeemableAsset()).withdraw(usdToken, amount);
   }
 
-  function _fillOrder(uint256 index, uint256[] memory hintPrevIds) internal virtual {
+  /// @inheritdoc IFulfillmentVault
+  function bridgeUsdTokenToCore(address usdToken, uint256 amount) external override onlyRole(KEEPER_ROLE) whenPaused {
+    CoreWriterLib.bridgeToCore(usdToken, amount);
+  }
+
+  /// @inheritdoc IFulfillmentVault
+  function tradeOnCore(uint32 index, bool isBuy, uint32 limitPx, uint64 sz) external override onlyRole(KEEPER_ROLE) whenPaused {
+    // Get storage
+    FulfillmentVaultStorage storage $ = _getFulfillmentVaultStorage();
+    // Place an IOC limit order to trade usdc for asset on core
+    CoreWriterLib.placeLimitOrder(HLConversions.spotToAssetId(index), isBuy, limitPx, sz, false, 3, $._nonce);
+    $._nonce++;
+  }
+
+  /// @inheritdoc IFulfillmentVault
+  function fillOrder(uint256 index, uint256[] memory hintPrevIds) external override onlyRole(KEEPER_ROLE) whenPaused {
     uint256[] memory indices = new uint256[](1);
     indices[0] = index;
     uint256[][] memory hintPrevIdsList = new uint256[][](1);
     hintPrevIdsList[0] = hintPrevIds;
     IOrderPool(orderPool()).processOrders(indices, hintPrevIdsList);
-  }
-
-  /// @dev Burns USDX into usdTokens for the purpose of transferring them to core
-  function _burnUsdx(uint256 amount) internal {
-    IUSDX(redeemableAsset()).burn(amount);
-  }
-
-  function _bridgeUsdTokenToCore(address token, uint256 amount) internal virtual {
-    CoreWriterLib.bridgeToCore(token, amount);
-  }
-
-  function _tradeUsdTokensToUsdcOnCore(address token, uint256 amount) internal virtual {
-    revert("Not implemented");
-    // Get storage
-    FulfillmentVaultStorage storage $ = _getFulfillmentVaultStorage();
-    // Place an IOC limit order to trade usd tokens for usdc on core
-    // ToDo: Figure out asset, limitPx, and sz
-    //     uint32 asset,
-    //     uint64 limitPx,
-    //     uint64 sz,
-    // CoreWriterLib.placeLimitOrder(asset, false, limitPx, sz, false, 3, $._nonce);
-    $._nonce++;
-  }
-
-  function burnUsdx(uint256 amount) external override onlyRole(KEEPER_ROLE) whenPaused {
-    _burnUsdx(amount);
-  }
-
-  function bridgeUsdTokenToCore(address token, uint256 amount) external override onlyRole(KEEPER_ROLE) whenPaused {
-    _bridgeUsdTokenToCore(token, amount);
-  }
-
-  function burnUsdxAndBridgeToCore(uint256 amount) external override onlyRole(KEEPER_ROLE) whenPaused {
-    _burnUsdx(amount);
-    address[] memory usdTokens = IUSDX(redeemableAsset()).getSupportedTokens();
-    for (uint256 i = 0; i < usdTokens.length; i++) {
-      IERC20 usdToken = IERC20(usdTokens[i]);
-      _bridgeUsdTokenToCore(address(usdToken), usdToken.balanceOf(address(this)));
-    }
   }
 }
 

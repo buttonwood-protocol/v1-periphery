@@ -39,6 +39,7 @@ import {IConversionQueue} from "@core/interfaces/IConversionQueue/IConversionQue
 import {ConversionQueue} from "@core/ConversionQueue.sol";
 import {IPyth} from "@pythnetwork/IPyth.sol";
 import {MockPyth} from "@pythnetwork/MockPyth.sol";
+import {MockERC20} from "./mocks/MockERC20.sol";
 
 contract BaseTest is Test {
   using OPoolConfigIdLibrary for OPoolConfigId;
@@ -105,7 +106,7 @@ contract BaseTest is Test {
 
   function _deployWHype() internal {
     // Deploy the WHYPE to the 0x555... address
-    // deployCodeTo("test/artifacts/WHYPE9.json", WHYPE_ADDRESS);
+    deployCodeTo("test/artifacts/WHYPE9.json", WHYPE_ADDRESS);
     whype = IWNT(WHYPE_ADDRESS);
     vm.label(address(whype), "WHYPE");
   }
@@ -176,10 +177,12 @@ contract BaseTest is Test {
 
   function _createUSDX() internal {
     // Make usdt
-    usdt = IERC20(USDT0_ADDRESS);
+    // usdt = IERC20(USDT0_ADDRESS);
+    usdt = new MockERC20("USDT", "USDT", 18);
     vm.label(address(usdt), "USDT");
     // Make usdh
-    usdh = IERC20(USDH0_ADDRESS);
+    // usdh = IERC20(USDH0_ADDRESS);
+    usdh = new MockERC20("USDH", "USDH", 18);
     vm.label(address(usdh), "USDH");
     // Make usdx
     usdx = new USDX("USDX", "USDX", 18, admin);
@@ -192,7 +195,8 @@ contract BaseTest is Test {
   }
 
   function _setupCollaterals() internal {
-    ubtc = IERC20(UBTC_ADDRESS);
+    // ubtc = IERC20(UBTC_ADDRESS);
+    ubtc = new MockERC20("UBTC", "UBTC", 8);
     vm.label(address(ubtc), "UBTC");
   }
 
@@ -219,10 +223,17 @@ contract BaseTest is Test {
     loanManager = new LoanManager(
       MORTGAGE_NFT_NAME, MORTGAGE_NFT_SYMBOL, address(nftMetadataGenerator), address(consol), address(generalManager)
     );
+    mortgageNFT = IMortgageNFT(loanManager.nft());
 
     // Set the loan manager in the general manager
     vm.startPrank(admin);
     generalManager.setLoanManager(address(loanManager));
+    vm.stopPrank();
+
+    // Grant ACCOUNTING_ROLE to the loan manager for the subconsols
+    vm.startPrank(admin);
+    IAccessControl(address(whypeSubConsol)).grantRole(Roles.ACCOUNTING_ROLE, address(loanManager));
+    IAccessControl(address(ubtcSubConsol)).grantRole(Roles.ACCOUNTING_ROLE, address(loanManager));
     vm.stopPrank();
   }
 
