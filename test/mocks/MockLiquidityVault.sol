@@ -6,6 +6,15 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract MockLiquidityVault is LiquidityVault {
   function _totalAssets() internal view override returns (uint256) {
-    return IERC20(depositableAsset()).balanceOf(address(this)) + IERC20(redeemableAsset()).balanceOf(address(this));
+    address[] memory depositableAssets = depositableAssets();
+    address[] memory redeemableAssets = redeemableAssets();
+    uint256 total = 0;
+    for (uint256 i = 0; i < depositableAssets.length; i++) {
+      total += IERC20(depositableAssets[i]).balanceOf(address(this));
+    }
+    for (uint256 i = 0; i < redeemableAssets.length; i++) {
+      total += IERC20(redeemableAssets[i]).balanceOf(address(this));
+    }
+    return total;
   }
 }

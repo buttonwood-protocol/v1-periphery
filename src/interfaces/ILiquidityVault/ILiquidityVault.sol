@@ -51,13 +51,13 @@ interface ILiquidityVault is IERC20, ILiquidityVaultEvents, ILiquidityVaultError
    * @notice The address of the depositable asset.
    * @return The address of the depositable asset.
    */
-  function depositableAsset() external view returns (address);
+  function depositableAssets() external view returns (address[] memory);
 
   /**
-   * @notice The address of the redeemable asset.
-   * @return The address of the redeemable asset.
+   * @notice The addresses of the redeemable assets.
+   * @return The addresses of the redeemable assets.
    */
-  function redeemableAsset() external view returns (address);
+  function redeemableAssets() external view returns (address[] memory);
 
   /**
    * @notice Sets the paused state of the vault.
@@ -67,9 +67,10 @@ interface ILiquidityVault is IERC20, ILiquidityVaultEvents, ILiquidityVaultError
 
   /**
    * @notice Deposits the specified amount of depositable asset into the vault.
+   * @param depositableAsset The address of the depositable asset to deposit.
    * @param assets The amount of depositable asset to deposit.
    */
-  function deposit(uint256 assets) external;
+  function deposit(address depositableAsset, uint256 assets) external;
 
   /**
    * @notice Redeems the specified amount of shares for the redeemable asset.

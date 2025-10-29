@@ -10,7 +10,7 @@ import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol"
 import {IERC1822Proxiable} from "@openzeppelin/contracts/interfaces/draft-IERC1822.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {LiquidityVault} from "../src/LiquidityVault.sol";
-import {ILiquidityVault} from "../src/interfaces/ILiquidityVault/ILiquidityVault.sol";
+import {ILiquidityVault, ILiquidityVaultErrors} from "../src/interfaces/ILiquidityVault/ILiquidityVault.sol";
 import {MockLiquidityVault} from "./mocks/MockLiquidityVault.sol";
 import {MockLiquidityVault2} from "./mocks/MockLiquidityVault2.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
@@ -36,7 +36,7 @@ contract LiquidityVaultTest is Test {
     vm.startPrank(admin);
     MockERC20(address(depositableAsset)).mint(admin, PRIME_AMOUNT);
     depositableAsset.approve(address(liquidityVault), PRIME_AMOUNT);
-    liquidityVault.deposit(PRIME_AMOUNT);
+    liquidityVault.deposit(address(depositableAsset), PRIME_AMOUNT);
     vm.stopPrank();
 
     // Transfer the liquidityVault balance to the liquidityVault itself
@@ -49,8 +49,12 @@ contract LiquidityVaultTest is Test {
     // Set up the mock assets
     depositableAsset = new MockERC20("Depositable Asset", "DA", 18);
     vm.label(address(depositableAsset), "Depositable Asset");
+    address[] memory depositableAssets = new address[](1);
+    depositableAssets[0] = address(depositableAsset);
     redeemableAsset = new MockERC20("Redeemable Asset", "RA", 18);
     vm.label(address(redeemableAsset), "Redeemable Asset");
+    address[] memory redeemableAssets = new address[](1);
+    redeemableAssets[0] = address(redeemableAsset);
 
     MockLiquidityVault liquidityVaultImplementation = new MockLiquidityVault();
     bytes memory initializerData = abi.encodeWithSelector(
@@ -59,8 +63,8 @@ contract LiquidityVaultTest is Test {
       SYMBOL,
       DECIMALS,
       DECIMALS_OFFSET,
-      address(depositableAsset),
-      address(redeemableAsset)
+      depositableAssets,
+      redeemableAssets
     );
     vm.startPrank(admin);
     ERC1967Proxy proxy = new ERC1967Proxy(address(liquidityVaultImplementation), initializerData);
@@ -83,8 +87,8 @@ contract LiquidityVaultTest is Test {
     assertEq(liquidityVault.decimalsOffset(), DECIMALS_OFFSET);
     assertEq(liquidityVault.totalAssets(), PRIME_AMOUNT);
     assertEq(liquidityVault.totalSupply(), PRIME_AMOUNT * (10 ** DECIMALS_OFFSET));
-    assertEq(liquidityVault.depositableAsset(), address(depositableAsset));
-    assertEq(liquidityVault.redeemableAsset(), address(redeemableAsset));
+    assertEq(liquidityVault.depositableAssets()[0], address(depositableAsset));
+    assertEq(liquidityVault.redeemableAssets()[0], address(redeemableAsset));
     assertTrue(liquidityVault.hasRole(liquidityVault.DEFAULT_ADMIN_ROLE(), admin));
   }
 
@@ -223,7 +227,7 @@ contract LiquidityVaultTest is Test {
     // User attempts to deposit when the liquidityVault is paused
     vm.startPrank(user);
     vm.expectRevert(abi.encodeWithSelector(PausableUpgradeable.EnforcedPause.selector));
-    liquidityVault.deposit(amount);
+    liquidityVault.deposit(address(depositableAsset), amount);
     vm.stopPrank();
   }
 
@@ -243,7 +247,7 @@ contract LiquidityVaultTest is Test {
         IAccessControl.AccessControlUnauthorizedAccount.selector, caller, liquidityVault.WHITELIST_ROLE()
       )
     );
-    liquidityVault.deposit(depositAmount);
+    liquidityVault.deposit(address(depositableAsset), depositAmount);
     vm.stopPrank();
   }
 
@@ -262,7 +266,7 @@ contract LiquidityVaultTest is Test {
     vm.startPrank(user);
     MockERC20(address(depositableAsset)).mint(user, depositAmount);
     depositableAsset.approve(address(liquidityVault), depositAmount);
-    liquidityVault.deposit(depositAmount);
+    liquidityVault.deposit(address(depositableAsset), depositAmount);
     vm.stopPrank();
 
     // Validate that the user has deposited the depositAmount of depositableAsset into the liquidityVault
@@ -284,6 +288,27 @@ contract LiquidityVaultTest is Test {
     assertEq(depositableAsset.balanceOf(user), 0, "Depositable asset balance of user should be 0");
   }
 
+  function test_deposit_revertWhenAssetNotDepositable(address inputAsset, uint128 depositAmount) public {
+    // Ensure the input asset is not depositable
+    vm.assume(inputAsset != address(depositableAsset));
+
+    // Ensure the user has the WHITELIST_ROLE
+    vm.startPrank(admin);
+    liquidityVault.grantRole(liquidityVault.WHITELIST_ROLE(), user);
+    vm.stopPrank();
+
+    // Admin sets the whitelist enforced to true
+    vm.startPrank(admin);
+    liquidityVault.setWhitelistEnforced(true);
+    vm.stopPrank();
+
+    // User deposits when the liquidityVault is whitelist enforced and the user is whitelisted
+    vm.startPrank(user);
+    vm.expectRevert(abi.encodeWithSelector(ILiquidityVaultErrors.AssetNotDepositable.selector, inputAsset));
+    liquidityVault.deposit(address(inputAsset), depositAmount);
+    vm.stopPrank();
+  }
+
   function test_deposit_firstDeposit(uint128 depositAmount) public {
     // Mint depositAmount of depositableAsset to the user
     MockERC20(address(depositableAsset)).mint(user, depositAmount);
@@ -295,7 +320,7 @@ contract LiquidityVaultTest is Test {
 
     // User deposits the depositableAsset into the liquidityVault
     vm.startPrank(user);
-    liquidityVault.deposit(depositAmount);
+    liquidityVault.deposit(address(depositableAsset), depositAmount);
     vm.stopPrank();
 
     // Validate that the user has deposited the depositAmount of depositableAsset into the liquidityVault
@@ -341,7 +366,7 @@ contract LiquidityVaultTest is Test {
 
     // User deposits the depositableAsset into the liquidityVault
     vm.startPrank(user);
-    liquidityVault.deposit(depositAmount);
+    liquidityVault.deposit(address(depositableAsset), depositAmount);
     vm.stopPrank();
 
     // LiquidityVault exchanges the depositableAsset for the redeemableAsset

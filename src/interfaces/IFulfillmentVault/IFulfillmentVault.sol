@@ -16,10 +16,22 @@ interface IFulfillmentVault is ILiquidityVault {
   function wrappedNativeToken() external view returns (address);
 
   /**
+   * @notice Gets the address of the general manager
+   * @return The address of the general manager
+   */
+  function generalManager() external view returns (address);
+
+  /**
    * @notice Gets the address of the order pool
    * @return The address of the order pool
    */
   function orderPool() external view returns (address);
+
+  /**
+   * @notice Gets the address of the USDX token
+   * @return The address of the USDX token
+   */
+  function usdx() external view returns (address);
 
   /**
    * @notice Gets the ongoing nonce that generates distinct cloid values for exchanges on core

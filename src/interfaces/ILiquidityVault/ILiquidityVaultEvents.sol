@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.20;
 
+// ToDo: Add events for all keeper functions too!
 /**
  * @title ILiquidityVaultEvents
  * @author @SocksNFlops
@@ -21,9 +22,9 @@ interface ILiquidityVaultEvents {
   /**
    * @notice Emitted when a user redeems assets from the vault.
    * @param user The address of the user who redeemed the assets.
-   * @param redeemableAsset The address of the redeemable asset.
-   * @param amountRedeemed The amount of redeemable asset received.
+   * @param redeemableAssets The addresses of the redeemable assets.
+   * @param amountsRedeemed The amounts of redeemable assets received.
    * @param sharesBurned The amount of shares burned.
    */
-  event Redeemed(address indexed user, address indexed redeemableAsset, uint256 amountRedeemed, uint256 sharesBurned);
+  event Redeemed(address indexed user, address[] indexed redeemableAssets, uint256[] amountsRedeemed, uint256 sharesBurned);
 }

@@ -33,7 +33,7 @@ contract FulfillmentVaultTest is BaseTest {
   using PrecompileLib for address;
 
   string NAME = "Test Fulfillment Vault";
-  string SYMBOL = "Test Fulfillment Vault";
+  string SYMBOL = "tFT";
   uint8 DECIMALS = 26; // ToDo: Make this 8 + usdx decimals????
   uint8 DECIMALS_OFFSET = 8;
 
@@ -140,7 +140,7 @@ contract FulfillmentVaultTest is BaseTest {
     usdx.deposit(address(usdt), usdtAmount);
     usdx.deposit(address(usdh), usdhAmount);
     usdx.approve(address(fulfillmentVault), PRIME_AMOUNT);
-    fulfillmentVault.deposit(PRIME_AMOUNT);
+    fulfillmentVault.deposit(address(usdx), PRIME_AMOUNT);
     vm.stopPrank();
 
     // Transfer the fulfillmentVault balance to the fulfillmentVault itself
@@ -171,9 +171,8 @@ contract FulfillmentVaultTest is BaseTest {
       SYMBOL,
       DECIMALS,
       DECIMALS_OFFSET,
-      address(usdx),
       address(whype),
-      address(orderPool)
+      address(generalManager)
     );
     vm.startPrank(admin);
     ERC1967Proxy proxy = new ERC1967Proxy(address(fulfillmentVaultImplementation), initializerData);
@@ -208,10 +207,12 @@ contract FulfillmentVaultTest is BaseTest {
     assertEq(fulfillmentVault.decimalsOffset(), DECIMALS_OFFSET);
     assertEq(fulfillmentVault.totalAssets(), PRIME_AMOUNT);
     assertEq(fulfillmentVault.totalSupply(), PRIME_AMOUNT * (10 ** DECIMALS_OFFSET));
-    assertEq(fulfillmentVault.depositableAsset(), address(usdx));
-    assertEq(fulfillmentVault.redeemableAsset(), address(usdx));
+    assertEq(fulfillmentVault.depositableAssets()[0], address(usdx));
+    assertEq(fulfillmentVault.redeemableAssets()[0], address(usdx));
     assertEq(fulfillmentVault.wrappedNativeToken(), address(whype));
+    assertEq(fulfillmentVault.generalManager(), address(generalManager));
     assertEq(fulfillmentVault.orderPool(), address(orderPool));
+    assertEq(fulfillmentVault.usdx(), address(usdx));
     assertEq(fulfillmentVault.nonce(), 0);
     assertTrue(fulfillmentVault.hasRole(fulfillmentVault.DEFAULT_ADMIN_ROLE(), admin));
   }
@@ -363,7 +364,7 @@ contract FulfillmentVaultTest is BaseTest {
       usdt.approve(address(usdx), usdtAmount);
       usdx.deposit(address(usdt), usdtAmount);
       usdx.approve(address(fulfillmentVault), mintAmount);
-      fulfillmentVault.deposit(mintAmount);
+      fulfillmentVault.deposit(address(usdx), mintAmount);
     }
     vm.stopPrank();
 
@@ -422,7 +423,7 @@ contract FulfillmentVaultTest is BaseTest {
       usdx.deposit(address(usdt), depositAmount);
       uint256 usdxAmount = usdx.convertAmount(address(usdt), depositAmount);
       usdx.approve(address(fulfillmentVault), usdxAmount);
-      fulfillmentVault.deposit(usdxAmount);
+      fulfillmentVault.deposit(address(usdx), usdxAmount);
     }
     vm.stopPrank();
 
@@ -487,7 +488,7 @@ contract FulfillmentVaultTest is BaseTest {
       usdt.approve(address(usdx), usdtAmount);
       usdx.deposit(address(usdt), usdtAmount);
       usdx.approve(address(fulfillmentVault), usdxAmount);
-      fulfillmentVault.deposit(usdxAmount);
+      fulfillmentVault.deposit(address(usdx), usdxAmount);
     }
     vm.stopPrank();
 
@@ -678,7 +679,7 @@ contract FulfillmentVaultTest is BaseTest {
       usdt.approve(address(usdx), usdtAmount);
       usdx.deposit(address(usdt), usdtAmount);
       usdx.approve(address(fulfillmentVault), 5_000e18);
-      fulfillmentVault.deposit(5_000e18);
+      fulfillmentVault.deposit(address(usdx), 5_000e18);
       vm.stopPrank();
     }
 

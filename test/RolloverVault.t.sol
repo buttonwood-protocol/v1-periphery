@@ -1,0 +1,420 @@
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+import {BaseTest, console} from "./BaseTest.t.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {USDX} from "@core/USDX.sol";
+import {IUSDX} from "@core/interfaces/IUSDX/IUSDX.sol";
+import {ILiquidityVaultEvents} from "../src/interfaces/ILiquidityVault/ILiquidityVaultEvents.sol";
+import {IRolloverVault, IRolloverVaultEvents, IRolloverVaultErrors} from "../src/interfaces/IRolloverVault/IRolloverVault.sol";
+import {RolloverVault} from "../src/RolloverVault.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {Roles} from "@core/libraries/Roles.sol";
+import {IWNT} from "../src/interfaces/IWNT.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {IERC165} from "@openzeppelin/contracts/interfaces/IERC165.sol";
+import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
+import {IERC1822Proxiable} from "@openzeppelin/contracts/interfaces/draft-IERC1822.sol";
+import {ILiquidityVault} from "../src/interfaces/ILiquidityVault/ILiquidityVault.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import {CoreSimulatorLib} from "@hyper-evm-lib/test/simulation/CoreSimulatorLib.sol";
+import {PrecompileLib} from "@hyper-evm-lib/src/PrecompileLib.sol";
+import {HyperCore} from "@hyper-evm-lib/test/simulation/HyperCore.sol";
+import {TokenRegistry} from "@hyper-evm-lib/src/registry/TokenRegistry.sol";
+import {HLConversions} from "@hyper-evm-lib/src/common/HLConversions.sol";
+import {HLConstants} from "@hyper-evm-lib/src/common/HLConstants.sol";
+import {Router} from "../src/Router.sol";
+import {MockPriceOracle} from "./mocks/MockPriceOracle.sol";
+import {CreationRequest, BaseRequest} from "@core/types/orders/OrderRequests.sol";
+import {IOriginationPoolScheduler} from "@core/interfaces/IOriginationPoolScheduler/IOriginationPoolScheduler.sol";
+
+contract RolloverVaultTest is BaseTest {
+  HyperCore public hyperCore;
+
+  using PrecompileLib for address;
+
+  string NAME = "Test Rollover Vault";
+  string SYMBOL = "tRV";
+  uint8 DECIMALS = 26; // ToDo: Make this 8 + usdx decimals????
+  uint8 DECIMALS_OFFSET = 8;
+
+  // Hyper-EVM-Lib Values
+  TokenRegistry public tokenRegistry;
+  address public HYPER_CORE_ADDRESS = 0x9999999999999999999999999999999999999999;
+  address TOKEN_INFO_PRECOMPILE_ADDRESS = 0x000000000000000000000000000000000000080C;
+  address SPOT_INFO_PRECOMPILE_ADDRESS = 0x000000000000000000000000000000000000080b;
+  address SPOT_PX_PRECOMPILE_ADDRESS = 0x0000000000000000000000000000000000000808;
+  address public TOKEN_REGISTRY_ADDRESS = 0x0b51d1A9098cf8a72C325003F44C194D41d7A85B;
+  uint32 public HYPE_TOKEN_INDEX = uint32(HLConstants.hypeTokenIndex());
+  uint32 public USDC_TOKEN_INDEX = 0;
+  uint32 public USDT_TOKEN_INDEX = 268;
+  uint32 public USDH_TOKEN_INDEX = 360;
+
+  RolloverVault public rolloverVault;
+
+  address public user = makeAddr("user");
+  address public keeper = makeAddr("keeper");
+
+  uint256 public PRIME_AMOUNT = 1e18; // The initial amount of depositableAsset to prime the liquidityVault with (in depositableAsset decimals)
+
+  function mockTokenInfo(
+    uint32 tokenIndex,
+    address evmContract,
+    string memory name,
+    uint8 szDecimals,
+    uint8 weiDecimals,
+    int8 evmExtraWeiDecimals
+  ) internal {
+    PrecompileLib.TokenInfo memory info = PrecompileLib.TokenInfo({
+      name: name,
+      spots: new uint64[](0),
+      deployerTradingFeeShare: 0,
+      deployer: address(0),
+      evmContract: evmContract,
+      szDecimals: szDecimals,
+      weiDecimals: weiDecimals,
+      evmExtraWeiDecimals: evmExtraWeiDecimals
+    });
+
+    vm.mockCall(TOKEN_INFO_PRECOMPILE_ADDRESS, abi.encode(tokenIndex), abi.encode(info));
+    if (tokenIndex != HYPE_TOKEN_INDEX && tokenIndex != USDC_TOKEN_INDEX) {
+      tokenRegistry.setTokenInfo(tokenIndex);
+    }
+  }
+
+  function mockSpotInfo(
+    uint32 spotIndex,
+    string memory name,
+    uint64[2] memory tokens
+  ) internal {
+    PrecompileLib.SpotInfo memory info = PrecompileLib.SpotInfo({
+      name: name,
+      tokens: tokens
+    });
+    vm.mockCall(SPOT_INFO_PRECOMPILE_ADDRESS, abi.encode(spotIndex), abi.encode(info));
+  }
+
+  function mockSpotPx(uint32 spotIndex, uint64 px) internal {
+    vm.mockCall(SPOT_PX_PRECOMPILE_ADDRESS, abi.encode(spotIndex), abi.encode(px));
+  }
+
+  function setupHyperCore() internal {
+    hyperCore = new HyperCore();
+    vm.etch(HYPER_CORE_ADDRESS, address(hyperCore).code);
+    vm.label(HYPER_CORE_ADDRESS, "HyperCore");
+    hyperCore = CoreSimulatorLib.init();
+  }
+
+  function setupTokenRegistry() internal {
+    tokenRegistry = new TokenRegistry();
+    vm.etch(TOKEN_REGISTRY_ADDRESS, address(tokenRegistry).code);
+    vm.label(TOKEN_REGISTRY_ADDRESS, "TokenRegistry");
+    tokenRegistry = TokenRegistry(TOKEN_REGISTRY_ADDRESS);
+    mockTokenInfo(USDT_TOKEN_INDEX, address(usdt), "USDT", 2, 8, -2);
+    mockTokenInfo(USDH_TOKEN_INDEX, address(usdh), "USDH", 2, 8, -2);
+    mockTokenInfo(HYPE_TOKEN_INDEX, address(0), "HYPE", 2, 8, 0);
+    mockTokenInfo(USDC_TOKEN_INDEX, address(0), "USDC", 8, 8, 0);
+  }
+
+  function setupSpotInfo() internal {
+    uint64[2] memory tokens = [uint64(USDT_TOKEN_INDEX), uint64(USDC_TOKEN_INDEX)];
+    mockSpotInfo(USDT_TOKEN_INDEX, "@166", tokens);
+    tokens = [uint64(USDH_TOKEN_INDEX), uint64(USDC_TOKEN_INDEX)];
+    mockSpotInfo(USDH_TOKEN_INDEX, "@230", tokens);
+    tokens = [uint64(HYPE_TOKEN_INDEX), uint64(USDC_TOKEN_INDEX)];
+    mockSpotInfo(HYPE_TOKEN_INDEX, "@107", tokens);
+  }
+
+  function primeRolloverVault() public {
+    // Mint 0.5 PRIME_AMOUNT of usdt0 and usdh to the admin
+    vm.startPrank(admin);
+    uint256 usdtAmount = usdx.convertUnderlying(address(usdt), PRIME_AMOUNT / 2);
+    uint256 usdhAmount = usdx.convertUnderlying(address(usdh), PRIME_AMOUNT / 2);
+    deal(address(usdt), admin, usdtAmount);
+    deal(address(usdh), admin, usdhAmount);
+    vm.stopPrank();
+
+    // Admin primes the rolloverVault with PRIME_AMOUNT of usdx
+    vm.startPrank(admin);
+    usdt.approve(address(usdx), usdtAmount);
+    usdh.approve(address(usdx), usdhAmount);
+    usdx.deposit(address(usdt), usdtAmount);
+    usdx.deposit(address(usdh), usdhAmount);
+    usdx.approve(address(rolloverVault), PRIME_AMOUNT);
+    rolloverVault.deposit(address(usdx), PRIME_AMOUNT);
+    vm.stopPrank();
+
+    // Transfer the rolloverVault balance to the rolloverVault itself
+    vm.startPrank(admin);
+    rolloverVault.transfer(address(rolloverVault), rolloverVault.balanceOf(admin));
+    vm.stopPrank();
+  }
+
+  function setUp() public {
+    // Initialize the HyperCore simulator
+    // vm.createSelectFork(vm.rpcUrl("hyperliquid"), 17133085);
+    setupHyperCore();
+
+    // Setup core
+    setUpCore();
+
+    // Setup the mock token registry
+    setupTokenRegistry();
+
+    // Setup the mock spot info
+    setupSpotInfo();
+
+    // Deploy the rolloverVault
+    RolloverVault rolloverVaultImplementation = new RolloverVault();
+    bytes memory initializerData = abi.encodeWithSelector(
+      RolloverVault.initialize.selector,
+      NAME,
+      SYMBOL,
+      DECIMALS,
+      DECIMALS_OFFSET,
+      address(generalManager)
+    );
+    vm.startPrank(admin);
+    ERC1967Proxy proxy = new ERC1967Proxy(address(rolloverVaultImplementation), initializerData);
+    vm.stopPrank();
+    rolloverVault = RolloverVault(payable(address(proxy)));
+
+    // Prime the rolloverVault
+    primeRolloverVault();
+
+    // Grant the keeper the KEEPER_ROLE
+    vm.startPrank(admin);
+    rolloverVault.grantRole(rolloverVault.KEEPER_ROLE(), keeper);
+    vm.stopPrank();
+
+    // Force the rolloverVault to be activated on hypercore
+    CoreSimulatorLib.forceAccountActivation(address(rolloverVault));
+    
+    // Force activate the HYPE system address so bridging works
+    CoreSimulatorLib.forceAccountActivation(0x2222222222222222222222222222222222222222);
+  }
+
+  function test_initialize() public {
+    CoreSimulatorLib.forceSpotBalance(address(rolloverVault), USDT_TOKEN_INDEX, 0);
+    assertEq(rolloverVault.name(), NAME);
+    assertEq(rolloverVault.symbol(), SYMBOL);
+    assertEq(rolloverVault.decimals(), DECIMALS);
+    assertEq(rolloverVault.decimalsOffset(), DECIMALS_OFFSET);
+    assertEq(rolloverVault.totalAssets(), PRIME_AMOUNT);
+    assertEq(rolloverVault.totalSupply(), PRIME_AMOUNT * (10 ** DECIMALS_OFFSET));
+    assertEq(rolloverVault.depositableAssets()[0], address(usdx));
+    assertEq(rolloverVault.redeemableAssets()[0], address(usdx));
+    assertEq(rolloverVault.redeemableAssets()[1], address(consol));
+    assertEq(rolloverVault.usdx(), address(usdx));
+    assertEq(rolloverVault.consol(), address(consol));
+    assertEq(rolloverVault.generalManager(), address(generalManager));
+    assertEq(rolloverVault.originationPoolScheduler(), address(originationPoolScheduler));
+    assertEq(rolloverVault.originationPools().length, 0);
+    assertTrue(rolloverVault.hasRole(rolloverVault.DEFAULT_ADMIN_ROLE(), admin));
+  }
+
+  function test_supportedInterfaces_valid() public view {
+    // Test all interfaces that RolloverVault implements
+    assertTrue(rolloverVault.supportsInterface(type(ILiquidityVault).interfaceId), "Should support ILiquidityVault");
+    assertTrue(rolloverVault.supportsInterface(type(IRolloverVault).interfaceId), "Should support IRolloverVault");
+    assertTrue(rolloverVault.supportsInterface(type(IERC165).interfaceId), "Should support IERC165");
+    assertTrue(rolloverVault.supportsInterface(type(IAccessControl).interfaceId), "Should support IAccessControl");
+    assertTrue(rolloverVault.supportsInterface(type(IERC1822Proxiable).interfaceId), "Should support IERC1822Proxiable");
+    assertTrue(rolloverVault.supportsInterface(type(IERC20).interfaceId), "Should support IERC20");
+    assertTrue(rolloverVault.supportsInterface(type(IERC20Metadata).interfaceId), "Should support IERC20Metadata");
+  }
+
+  function test_supportedInterfaces_invalid(bytes4 interfaceId) public view {
+    // Make sure it's not one of the valid interfaces
+    vm.assume(
+      interfaceId != type(ILiquidityVault).interfaceId && interfaceId != type(IRolloverVault).interfaceId
+        && interfaceId != type(IERC165).interfaceId && interfaceId != type(IAccessControl).interfaceId
+        && interfaceId != type(IERC1822Proxiable).interfaceId && interfaceId != type(IERC20).interfaceId
+        && interfaceId != type(IERC20Metadata).interfaceId
+    );
+    assertFalse(rolloverVault.supportsInterface(interfaceId), "Should not support invalid interface");
+  }
+
+  function test_depositOriginationPool_revertsWhenDoesNotHaveKeeperRole(address caller, address originationPool, uint256 amount) public {
+    // Ensure the caller does not have the KEEPER_ROLE
+    vm.assume(rolloverVault.hasRole(rolloverVault.KEEPER_ROLE(), caller) == false);
+
+    // Attempt to call depositOriginationPool() without the KEEPER_ROLE
+    vm.startPrank(caller);
+    vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, caller, rolloverVault.KEEPER_ROLE()));
+    rolloverVault.depositOriginationPool(originationPool, amount);
+    vm.stopPrank();
+  }
+
+  function test_depositOriginationPool_revertsWhenNotPaused(address originationPool, uint256 amount) public {
+    // Validate that the rolloverVault is not paused
+    assertFalse(rolloverVault.paused(), "RolloverVault should not be paused");
+
+    // Keeper attempts to call depositOriginationPool() when the rolloverVault is not paused
+    vm.startPrank(keeper);
+    vm.expectRevert(abi.encodeWithSelector(PausableUpgradeable.ExpectedPause.selector));
+    rolloverVault.depositOriginationPool(originationPool, amount);
+    vm.stopPrank();
+  }
+
+  function test_depositOriginationPool_revertsWhenOriginationPoolNotRegistered(address originationPool, uint256 amount) public {
+    // Ensure the origination pool is not registered
+    assertFalse(IOriginationPoolScheduler(originationPoolScheduler).isRegistered(originationPool), "Origination pool should not be registered");
+
+    // Keeper pauses the rolloverVault
+    vm.startPrank(keeper);
+    rolloverVault.setPaused(true);
+    vm.stopPrank();
+
+    // Keeper attempts to call depositOriginationPool() when the origination pool is not registered
+    vm.startPrank(keeper);
+    vm.expectRevert(abi.encodeWithSelector(IRolloverVaultErrors.OriginationPoolNotRegistered.selector, originationPool));
+    rolloverVault.depositOriginationPool(originationPool, amount);
+    vm.stopPrank();
+  }
+  function test_depositOriginationPool_revertsWhenAmountIsZero(address originationPool) public {
+    // Ensure the origination pool is registered
+    {
+      vm.startPrank(admin);
+      IOriginationPoolScheduler(originationPoolScheduler).updateRegistration(originationPool, true);
+      vm.stopPrank();
+    }
+
+    // Keeper pauses the rolloverVault
+    vm.startPrank(keeper);
+    rolloverVault.setPaused(true);
+    vm.stopPrank();
+
+    // Keeper attempts to call depositOriginationPool() when the amount is zero
+    vm.startPrank(keeper);
+    vm.expectRevert(abi.encodeWithSelector(IRolloverVaultErrors.AmountIsZero.selector));
+    rolloverVault.depositOriginationPool(originationPool, 0);
+    vm.stopPrank();
+  }
+
+  function test_depositOriginationPool_completeFlow(uint256 depositAmount) public {
+    // Ensure the depositAmount is at least $1 but less than the origination pool limit
+    depositAmount = uint256(bound(depositAmount, 1e18, originationPool.poolLimit()));
+
+    // User deposits depositAmount of usdx into the rolloverVault
+    {
+      vm.startPrank(user);
+      uint256 usdtAmount = usdx.convertUnderlying(address(usdt), depositAmount);
+      deal(address(usdt), user, usdtAmount);
+      usdt.approve(address(usdx), usdtAmount);
+      usdx.deposit(address(usdt), usdtAmount);
+      usdx.approve(address(rolloverVault), depositAmount);
+      rolloverVault.deposit(address(usdx), depositAmount);
+      vm.stopPrank();
+    }
+
+    // Record the user's balance in the rolloverVault, as well as total assets in the rolloverVault
+    uint256 userBalanceBefore = rolloverVault.balanceOf(user);
+    uint256 totalAssetsBefore = rolloverVault.totalAssets();
+
+    // Keeper pauses the rolloverVault
+    vm.startPrank(keeper);
+    rolloverVault.setPaused(true);
+    vm.stopPrank();
+
+    // Keeper deposits the entire usdx balance into the origination pool
+    vm.startPrank(keeper);
+    vm.expectEmit(true, true, true, true);
+    emit IRolloverVaultEvents.OriginationPoolAdded(address(originationPool));
+    vm.expectEmit(true, true, true, true);
+    emit IRolloverVaultEvents.OriginationPoolDeposited(address(originationPool), depositAmount);
+    rolloverVault.depositOriginationPool(address(originationPool), depositAmount);
+    vm.stopPrank();
+
+    // Verify the user's balance and the total assets in the rolloverVault have not changed
+    assertEq(rolloverVault.balanceOf(user), userBalanceBefore, "User's balance should not have changed");
+    assertEq(rolloverVault.totalAssets(), totalAssetsBefore, "Total assets should not have changed");
+
+    // Verify the origination pool is tracked
+    assertTrue(rolloverVault.isTracked(address(originationPool)), "Origination pool should be tracked");
+    assertEq(rolloverVault.originationPools().length, 1, "Origination pool should be tracked");
+    assertEq(rolloverVault.originationPools()[0], address(originationPool), "Origination pool should be the first one");
+
+    // Verify that the rolloverVault has the origination pool's balance
+    assertEq(originationPool.balanceOf(address(rolloverVault)), depositAmount, "RolloverVault should have the origination pool's balance");
+    assertEq(usdx.balanceOf(address(rolloverVault)), 1e18, "RolloverVault should have no usdx balance (only has the prime amount of $1)");
+  }
+
+  function test_redeemOriginationPool_revertsWhenDoesNotHaveKeeperRole(address caller, address originationPool) public {
+    // Ensure the caller does not have the KEEPER_ROLE
+    vm.assume(rolloverVault.hasRole(rolloverVault.KEEPER_ROLE(), caller) == false);
+
+    // Attempt to call redeemOriginationPool() without the KEEPER_ROLE
+    vm.startPrank(caller);
+    vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, caller, rolloverVault.KEEPER_ROLE()));
+    rolloverVault.redeemOriginationPool(originationPool);
+    vm.stopPrank();
+  }
+
+  function test_redeemOriginationPool_revertsWhenNotPaused(address originationPool) public {
+    // Validate that the rolloverVault is not paused
+    assertFalse(rolloverVault.paused(), "RolloverVault should not be paused");
+
+    // Keeper attempts to call redeemOriginationPool() when the rolloverVault is not paused
+    vm.startPrank(keeper);
+    vm.expectRevert(abi.encodeWithSelector(PausableUpgradeable.ExpectedPause.selector));
+    rolloverVault.redeemOriginationPool(originationPool);
+    vm.stopPrank();
+  }
+
+  function test_redeemOriginationPool_revertsWhenOriginationPoolNotTracked(address originationPool) public {
+    // Ensure the origination pool is not tracked
+    assertFalse(rolloverVault.isTracked(originationPool), "Origination pool should not be tracked");
+
+    // Keeper pauses the rolloverVault
+    vm.startPrank(keeper);
+    rolloverVault.setPaused(true);
+    vm.stopPrank();
+
+    // Keeper attempts to call redeemOriginationPool() when the origination pool is not tracked
+    vm.startPrank(keeper);
+    vm.expectRevert(abi.encodeWithSelector(IRolloverVaultErrors.OriginationPoolNotTracked.selector, originationPool));
+    rolloverVault.redeemOriginationPool(originationPool);
+    vm.stopPrank();
+  }
+  
+  function test_redeemOriginationPool_completeFlow(uint256 depositAmount) public {
+    // Ensure the depositAmount is at least $1 but less than the origination pool limit
+    depositAmount = uint256(bound(depositAmount, 1e18, originationPool.poolLimit()));
+
+    // User deposits depositAmount of usdx into the rolloverVault
+    {
+      vm.startPrank(user);
+      uint256 usdtAmount = usdx.convertUnderlying(address(usdt), depositAmount);
+      deal(address(usdt), user, usdtAmount);
+      usdt.approve(address(usdx), usdtAmount);
+      usdx.deposit(address(usdt), usdtAmount);
+      usdx.approve(address(rolloverVault), depositAmount);
+      rolloverVault.deposit(address(usdx), depositAmount);
+      vm.stopPrank();
+    }
+
+    // Keeper pauses the rolloverVault and deposits the entire usdx balance into the origination pool
+    {
+      vm.startPrank(keeper);
+      rolloverVault.setPaused(true);
+      rolloverVault.depositOriginationPool(address(originationPool), depositAmount);
+      vm.stopPrank();
+    }
+
+    // Skip time ahead to the origination pool's redemption period
+    vm.warp(originationPool.redemptionPhaseTimestamp());
+
+    // Keeper redeems the entire origination pool balance
+    vm.startPrank(keeper);
+    vm.expectEmit(true, true, true, true);
+    emit IRolloverVaultEvents.OriginationPoolRedeemed(address(originationPool), depositAmount);
+    rolloverVault.redeemOriginationPool(address(originationPool));
+    vm.stopPrank();
+
+    // Validate that the origination pool has been removed
+    assertFalse(rolloverVault.isTracked(address(originationPool)), "Origination pool should not be tracked");
+    assertEq(rolloverVault.originationPools().length, 0, "Origination pool should not be tracked");
+    assertEq(originationPool.balanceOf(address(rolloverVault)), 0, "Origination pool should have no balance");
+  }
+}

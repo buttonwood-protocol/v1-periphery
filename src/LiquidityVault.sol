@@ -44,14 +44,19 @@ abstract contract LiquidityVault is
    * @notice The storage for the LiquidityVault contract
    * @param _decimals The decimals of the vault
    * @param _decimalsOffset The decimals offset for measuring internal precision of shares
-   * @param _depositableAsset The address of the depositable asset
-   * @param _redeemableAsset The address of the redeemable asset
+   * @param _depositableAssets The addresses of the depositable assets
+   * @param _depositableAssetIndex The index of the depositable assets (one-indexed)
+   * @param _redeemableAssets The addresses of the redeemable assets
+   * @param _redeemableAssetIndex The index of the redeemable assets (one-indexed)
    */
   struct LiquidityVaultStorage {
     uint8 _decimals;
     uint8 _decimalsOffset;
-    address _depositableAsset;
-    address _redeemableAsset;
+    address[] _depositableAssets;
+    mapping(address => uint256) _depositableAssetIndex;
+    address[] _redeemableAssets;
+    mapping(address => uint256) _redeemableAssetIndex;
+
     bool _whitelistEnforced;
   }
 
@@ -83,11 +88,11 @@ abstract contract LiquidityVault is
     string memory symbol,
     uint8 _decimals,
     uint8 _decimalsOffset,
-    address _depositableAsset,
-    address _redeemableAsset
+    address[] memory _depositableAssets,
+    address[] memory _redeemableAssets
   ) internal onlyInitializing {
     __ERC20_init_unchained(name, symbol);
-    __LiquidityVault_init_unchained(_decimals, _decimalsOffset, _depositableAsset, _redeemableAsset);
+    __LiquidityVault_init_unchained(_decimals, _decimalsOffset, _depositableAssets, _redeemableAssets);
   }
 
   /**
@@ -97,14 +102,20 @@ abstract contract LiquidityVault is
   function __LiquidityVault_init_unchained(
     uint8 _decimals,
     uint8 _decimalsOffset,
-    address _depositableAsset,
-    address _redeemableAsset
+    address[] memory _depositableAssets,
+    address[] memory _redeemableAssets
   ) internal onlyInitializing {
     LiquidityVaultStorage storage $ = _getLiquidityVaultStorage();
     $._decimals = _decimals;
     $._decimalsOffset = _decimalsOffset;
-    $._depositableAsset = _depositableAsset;
-    $._redeemableAsset = _redeemableAsset;
+    $._depositableAssets = _depositableAssets;
+    for (uint256 i = 0; i < _depositableAssets.length; i++) {
+      $._depositableAssetIndex[_depositableAssets[i]] = i + 1;
+    }
+    $._redeemableAssets = _redeemableAssets;
+    for (uint256 i = 0; i < _redeemableAssets.length; i++) {
+      $._redeemableAssetIndex[_redeemableAssets[i]] = i + 1;
+    }
     $._whitelistEnforced = false;
   }
 
@@ -114,18 +125,18 @@ abstract contract LiquidityVault is
    * @param symbol The symbol of the liquidity vault
    * @param _decimals The decimals of the liquidity vault
    * @param _decimalsOffset The decimals offset for measuring internal precision of shares
-   * @param _depositableAsset The address of the depositable asset
-   * @param _redeemableAsset The address of the redeemable asset
+   * @param _depositableAssets The addresses of the depositable assets
+   * @param _redeemableAssets The addresses of the redeemable assets
    */
   function initialize(
     string memory name,
     string memory symbol,
     uint8 _decimals,
     uint8 _decimalsOffset,
-    address _depositableAsset,
-    address _redeemableAsset
+    address[] memory _depositableAssets,
+    address[] memory _redeemableAssets
   ) external virtual initializer {
-    __LiquidityVault_init(name, symbol, _decimals, _decimalsOffset, _depositableAsset, _redeemableAsset);
+    __LiquidityVault_init(name, symbol, _decimals, _decimalsOffset, _depositableAssets, _redeemableAssets);
     _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
   }
 
@@ -184,13 +195,13 @@ abstract contract LiquidityVault is
   }
 
   /// @inheritdoc ILiquidityVault
-  function depositableAsset() public view virtual override returns (address) {
-    return _getLiquidityVaultStorage()._depositableAsset;
+  function depositableAssets() public view virtual override returns (address[] memory) {
+    return _getLiquidityVaultStorage()._depositableAssets;
   }
 
   /// @inheritdoc ILiquidityVault
-  function redeemableAsset() public view virtual override returns (address) {
-    return _getLiquidityVaultStorage()._redeemableAsset;
+  function redeemableAssets() public view virtual override returns (address[] memory) {
+    return _getLiquidityVaultStorage()._redeemableAssets;
   }
 
   function _totalAssets() internal view virtual returns (uint256);
@@ -206,8 +217,12 @@ abstract contract LiquidityVault is
   }
 
   /// @dev Internal conversion function (from shares to assets) with support for rounding direction.
-  function _convertToAssets(uint256 shares, Math.Rounding rounding) internal view virtual returns (uint256) {
-    return shares.mulDiv(totalAssets() + 1, totalSupply() + 10 ** decimalsOffset(), rounding);
+  function _convertToAssets(uint256 shares, Math.Rounding rounding) internal view virtual returns (uint256[] memory) {
+    uint256[] memory assets = new uint256[](redeemableAssets().length);
+    for (uint256 i = 0; i < redeemableAssets().length; i++) {
+      assets[i] = shares.mulDiv(IERC20(redeemableAssets()[i]).balanceOf(address(this)) + 1, totalSupply() + 10 ** decimalsOffset(), rounding);
+    }
+    return assets;
   }
 
   /// @inheritdoc ILiquidityVault
@@ -220,28 +235,39 @@ abstract contract LiquidityVault is
   }
 
   /// @inheritdoc ILiquidityVault
-  function deposit(uint256 assets) external virtual override whenNotPaused checkWhitelistEnforced {
+  function deposit(address depositableAsset, uint256 assets) external virtual override whenNotPaused checkWhitelistEnforced {
+    // Validate the depositable asset is in the depositable assets list
+    if (_getLiquidityVaultStorage()._depositableAssetIndex[depositableAsset] == 0) {
+      revert AssetNotDepositable(depositableAsset);
+    }
     // Calculate the corresponding amount of shares for the deposited amount
     uint256 shares = _convertToShares(assets, Math.Rounding.Floor);
     // Mint the corresponding amount of shares to the sender
     _mint(msg.sender, shares);
     // Emit the deposited event
-    emit Deposited(msg.sender, depositableAsset(), assets, shares);
+    emit Deposited(msg.sender, depositableAsset, assets, shares);
     // Transfer the depositable asset from the sender to the vault
-    IERC20(depositableAsset()).safeTransferFrom(msg.sender, address(this), assets);
+    IERC20(depositableAsset).safeTransferFrom(msg.sender, address(this), assets);
   }
 
   /// @inheritdoc ILiquidityVault
   /// @dev No whitelist enforcement for redeeming. This prevents funds from being locked in the vault.
   function redeem(uint256 shares) external virtual override whenNotPaused {
     // Calculate the corresponding amount of assets for the redeemed shares
-    uint256 assets = _convertToAssets(shares, Math.Rounding.Floor);
+    uint256[] memory assetAmounts = _convertToAssets(shares, Math.Rounding.Floor);
     // Burn the corresponding amount of shares
     _burn(msg.sender, shares);
+
+    // Cache the redeemable assets array
+    address[] memory rAssets = redeemableAssets();
+
     // Emit the redeemed event
-    emit Redeemed(msg.sender, redeemableAsset(), assets, shares);
-    // Transfer the redeemable asset from the vault to the sender
-    IERC20(redeemableAsset()).safeTransfer(msg.sender, assets);
+    emit Redeemed(msg.sender, rAssets, assetAmounts, shares);
+
+    // Transfer the corresponding amount of redeemable assets to the sender
+    for (uint256 i = 0; i < rAssets.length; i++) {
+      IERC20(rAssets[i]).safeTransfer(msg.sender, assetAmounts[i]);
+    }
   }
 }
 

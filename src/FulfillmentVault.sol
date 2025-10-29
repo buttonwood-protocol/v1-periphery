@@ -11,6 +11,7 @@ import {IWNT} from "./interfaces/IWNT.sol";
 import {IFulfillmentVault} from "./interfaces/IFulfillmentVault/IFulfillmentVault.sol";
 import {IUSDX} from "@core/interfaces/IUSDX/IUSDX.sol";
 import {IOrderPool} from "@core/interfaces/IOrderPool/IOrderPool.sol";
+import {IGeneralManager} from "@core/interfaces/IGeneralManager/IGeneralManager.sol";
 
 /**
  * @title FulfillmentVault
@@ -21,19 +22,20 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
   using Math for uint256;
   using CoreWriterLib for *;
 
-  /// @notice Allow the contract to receive ETH (HYPE bridged from Core)
+  /// @notice Allow the contract to receive network native tokens (HYPE bridged from Core)
   receive() external payable {}
 
   /**
    * @custom:storage-location erc7201:buttonwood.storage.FulfillmentVault
    * @notice The storage for the FulfillmentVault contract
    * @param _wrappedNativeToken The address of the wrapped native token
-   * @param _orderPool The address of the order pool
+   * @param _generalManager The address of the general manager
    * @param _nonce The ongoing nonce that generates distinct cloid values for exchanges on core
    */
   struct FulfillmentVaultStorage {
     address _wrappedNativeToken;
-    address _orderPool;
+    address _generalManager;
+    address _usdx;
     uint128 _nonce;
   }
 
@@ -65,22 +67,25 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
     string memory symbol,
     uint8 _decimals,
     uint8 _decimalsOffset,
-    address _usdx,
     address _wrappedNativeToken,
-    address _orderPool
+    address _generalManager
   ) internal onlyInitializing {
     __ERC20_init_unchained(name, symbol);
-    __LiquidityVault_init_unchained(_decimals, _decimalsOffset, _usdx, _usdx);
-    __FulfillmentVault_init_unchained(_wrappedNativeToken, _orderPool);
+    address[] memory assets = new address[](1);
+    assets[0] = IGeneralManager(_generalManager).usdx();
+    __LiquidityVault_init_unchained(_decimals, _decimalsOffset, assets, assets);
+    __FulfillmentVault_init_unchained(_wrappedNativeToken, _generalManager);
   }
 
   /**
    * @dev Initializes the FulfillmentVault contract only
    */
   // solhint-disable-next-line func-name-mixedcase
-  function __FulfillmentVault_init_unchained(address _wrappedNativeToken, address _orderPool) internal onlyInitializing {
-    _getFulfillmentVaultStorage()._wrappedNativeToken = _wrappedNativeToken;
-    _getFulfillmentVaultStorage()._orderPool = _orderPool;
+  function __FulfillmentVault_init_unchained(address _wrappedNativeToken, address _generalManager) internal onlyInitializing {
+    FulfillmentVaultStorage storage $ = _getFulfillmentVaultStorage();
+    $._wrappedNativeToken = _wrappedNativeToken;
+    $._generalManager = _generalManager;
+    $._usdx = IGeneralManager(generalManager()).usdx();
   }
 
   /**
@@ -89,20 +94,18 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
    * @param symbol The symbol of the liquidity vault
    * @param _decimals The decimals of the liquidity vault
    * @param _decimalsOffset The decimals offset for measuring internal precision of shares
-   * @param _usdx The address of the usdx
    * @param _wrappedNativeToken The address of the wrapped native token
-   * @param _orderPool The address of the order pool
+   * @param _generalManager The address of the general manager
    */
   function initialize(
     string memory name,
     string memory symbol,
     uint8 _decimals,
     uint8 _decimalsOffset,
-    address _usdx,
     address _wrappedNativeToken,
-    address _orderPool
+    address _generalManager
   ) external initializer {
-    __FulfillmentVault_init(name, symbol, _decimals, _decimalsOffset, _usdx, _wrappedNativeToken, _orderPool);
+    __FulfillmentVault_init(name, symbol, _decimals, _decimalsOffset, _wrappedNativeToken, _generalManager);
     _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
   }
 
@@ -114,7 +117,7 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
   /// @inheritdoc LiquidityVault
   /// @dev Both depositable and redeemable assets are the same asset, so we override totalAssets to return the balance of only the redeemable asset.
   function _totalAssets() internal view override returns (uint256) {
-    return IERC20(redeemableAsset()).balanceOf(address(this));
+    return IERC20(usdx()).balanceOf(address(this));
   }
 
   /// @inheritdoc IFulfillmentVault
@@ -123,8 +126,18 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
   }
 
   /// @inheritdoc IFulfillmentVault
+  function generalManager() public view override returns (address) {
+    return _getFulfillmentVaultStorage()._generalManager;
+  }
+
+  /// @inheritdoc IFulfillmentVault
   function orderPool() public view override returns (address) {
-    return _getFulfillmentVaultStorage()._orderPool;
+    return IGeneralManager(generalManager()).orderPool();
+  }
+
+  /// @inheritdoc IFulfillmentVault
+  function usdx() public view override returns (address) {
+    return _getFulfillmentVaultStorage()._usdx;
   }
 
   /// @inheritdoc IFulfillmentVault
@@ -152,12 +165,12 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
 
   /// @inheritdoc IFulfillmentVault
   function burnUsdx(uint256 amount) external override onlyRole(KEEPER_ROLE) whenPaused {
-    IUSDX(redeemableAsset()).burn(amount);
+    IUSDX(usdx()).burn(amount);
   }
 
   // @inheritdoc IFulfillmentVault
   function withdrawUsdTokenFromUsdx(address usdToken, uint256 amount) external override onlyRole(KEEPER_ROLE) whenPaused {
-    IUSDX(redeemableAsset()).withdraw(usdToken, amount);
+    IUSDX(usdx()).withdraw(usdToken, amount);
   }
 
   /// @inheritdoc IFulfillmentVault
