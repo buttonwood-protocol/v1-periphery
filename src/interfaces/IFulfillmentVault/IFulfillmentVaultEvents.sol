@@ -21,6 +21,12 @@ interface IFulfillmentVaultEvents {
   event HypeWrapped(uint256 amount);
 
   /**
+   * @notice Emitted when whype is unwrapped.
+   * @param amount The amount of whype that was unwrapped.
+   */
+  event WhypeUnwrapped(uint256 amount);
+
+  /**
    * @notice Emitted when an asset is bridged from core to evm.
    * @param asset The index of the asset that was bridged.
    * @param amount The amount of asset that was bridged.

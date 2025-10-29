@@ -5,7 +5,7 @@ import {BaseTest, console} from "./BaseTest.t.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {USDX} from "@core/USDX.sol";
 import {IUSDX} from "@core/interfaces/IUSDX/IUSDX.sol";
-import {IFulfillmentVault} from "../src/interfaces/IFulfillmentVault/IFulfillmentVault.sol";
+import {IFulfillmentVault, IFulfillmentVaultEvents} from "../src/interfaces/IFulfillmentVault/IFulfillmentVault.sol";
 import {FulfillmentVault} from "../src/FulfillmentVault.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {Roles} from "@core/libraries/Roles.sol";
@@ -48,6 +48,7 @@ contract FulfillmentVaultTest is BaseTest {
   uint32 public USDC_TOKEN_INDEX = 0;
   uint32 public USDT_TOKEN_INDEX = 268;
   uint32 public USDH_TOKEN_INDEX = 360;
+  uint32 public UBTC_TOKEN_INDEX = 197;
 
   FulfillmentVault public fulfillmentVault;
 
@@ -113,6 +114,7 @@ contract FulfillmentVaultTest is BaseTest {
     mockTokenInfo(USDH_TOKEN_INDEX, address(usdh), "USDH", 2, 8, -2);
     mockTokenInfo(HYPE_TOKEN_INDEX, address(0), "HYPE", 2, 8, 0);
     mockTokenInfo(USDC_TOKEN_INDEX, address(0), "USDC", 8, 8, 0);
+    mockTokenInfo(UBTC_TOKEN_INDEX, address(ubtc), "UBTC", 5, 10, -2);
   }
 
   function setupSpotInfo() internal {
@@ -122,6 +124,8 @@ contract FulfillmentVaultTest is BaseTest {
     mockSpotInfo(USDH_TOKEN_INDEX, "@230", tokens);
     tokens = [uint64(HYPE_TOKEN_INDEX), uint64(USDC_TOKEN_INDEX)];
     mockSpotInfo(HYPE_TOKEN_INDEX, "@107", tokens);
+    tokens = [uint64(UBTC_TOKEN_INDEX), uint64(USDC_TOKEN_INDEX)];
+    mockSpotInfo(UBTC_TOKEN_INDEX, "@142", tokens);
   }
 
   function primeFulfillmentVault() public {
@@ -192,6 +196,9 @@ contract FulfillmentVaultTest is BaseTest {
     // Force activate the HYPE system address so bridging works
     CoreSimulatorLib.forceAccountActivation(0x2222222222222222222222222222222222222222);
 
+    // Force activate the UBTC system address so bridging works
+    CoreSimulatorLib.forceAccountActivation(0x20000000000000000000000000000000000000c5);
+
     // Grant the fulfillmentVault the orderPool's FULFILLMENT_VAULT_ROLE
     vm.startPrank(admin);
     IAccessControl(address(orderPool)).grantRole(Roles.FULFILLMENT_ROLE, address(fulfillmentVault));
@@ -242,14 +249,24 @@ contract FulfillmentVaultTest is BaseTest {
     assertFalse(fulfillmentVault.supportsInterface(interfaceId), "Should not support invalid interface");
   }
 
-  function test_approveWhype(address caller) public {
-    // Caller calls approveWhype()
+  function test_approveAssetToOrderPool_whype(address caller) public {
+    // Caller calls approveAssetToOrderPool(address(whype))
     vm.startPrank(caller);
-    fulfillmentVault.approveWhype();
+    fulfillmentVault.approveAssetToOrderPool(address(whype));
     vm.stopPrank();
 
     // Validate that order pool has maximum allowance of whype from fulfillmentVault
     assertEq(whype.allowance(address(fulfillmentVault), address(orderPool)), type(uint256).max);
+  }
+
+  function test_approveAssetToOrderPool_ubtc(address caller) public {
+    // Caller calls approveAssetToOrderPool(address(ubtc))
+    vm.startPrank(caller);
+    fulfillmentVault.approveAssetToOrderPool(address(ubtc));
+    vm.stopPrank();
+
+    // Validate that order pool has maximum allowance of ubtc from fulfillmentVault
+    assertEq(ubtc.allowance(address(fulfillmentVault), address(orderPool)), type(uint256).max);
   }
 
   function test_wrapHype(address caller, uint256 hypeBalance) public {
@@ -262,37 +279,61 @@ contract FulfillmentVaultTest is BaseTest {
 
     // Caller calls wrapHype()
     vm.startPrank(caller);
+    vm.expectEmit(true, true, true, true);
+    emit IFulfillmentVaultEvents.HypeWrapped(hypeBalance);
     fulfillmentVault.wrapHype();
     vm.stopPrank();
 
     // Validate that the fulfillmentVault has no hype balance and has the entire hype balance in whype now
     assertEq(address(fulfillmentVault).balance, 0, "FulfillmentVault should have no hype balance");
-    assertEq(whype.balanceOf(address(fulfillmentVault)), hypeBalance, "FulfillmentVault should have the same hype balance as before the wrap");
+    assertEq(whype.balanceOf(address(fulfillmentVault)), hypeBalance, "FulfillmentVault should have the previous hype balance in whype");
   }
 
-  function test_bridgeHypeFromCoreToEvm_revertsWhenDoesNotHaveKeeperRole(address caller, uint256 hypeBalance) public {
+  function test_unwrapWhype(address caller, uint256 whypeBalance) public {
+    // Donate a balance of whype to the fulfillmentVault
+    deal(address(this), whypeBalance);
+    whype.deposit{value: whypeBalance}();
+    whype.transfer(address(fulfillmentVault), whypeBalance);
+
+    // Validate that the fulfillmentVault has the whype balance and no hype balance before starting
+    assertEq(whype.balanceOf(address(fulfillmentVault)), whypeBalance, "FulfillmentVault should have the whype balance");
+    assertEq(address(fulfillmentVault).balance, 0, "FulfillmentVault should have no hype balance");
+
+    // Caller calls unwrapHype()
+    vm.startPrank(caller);
+    vm.expectEmit(true, true, true, true);
+    emit IFulfillmentVaultEvents.WhypeUnwrapped(whypeBalance);
+    fulfillmentVault.unwrapHype();
+    vm.stopPrank();
+
+    // Validate that the fulfillmentVault has no whype balance and has the entire whype balance in hype now
+    assertEq(whype.balanceOf(address(fulfillmentVault)), 0, "FulfillmentVault should have no whype balance");
+    assertEq(address(fulfillmentVault).balance, whypeBalance, "FulfillmentVault should have the previous whype balance in hype");
+  }
+
+  function test_bridgeAssetFromCoreToEvm_revertsWhenDoesNotHaveKeeperRole(address caller, uint64 assetIndex, uint256 bridgeAmount) public {
     // Ensure the caller does not have the KEEPER_ROLE
     vm.assume(fulfillmentVault.hasRole(fulfillmentVault.KEEPER_ROLE(), caller) == false);
 
-    // Attempt to call bridgeHypeFromCoreToEvm() without the KEEPER_ROLE
+    // Attempt to call bridgeAssetFromCoreToEvm() without the KEEPER_ROLE
     vm.startPrank(caller);
     vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, caller, fulfillmentVault.KEEPER_ROLE()));
-    fulfillmentVault.bridgeHypeFromCoreToEvm(hypeBalance);
+    fulfillmentVault.bridgeAssetFromCoreToEvm(assetIndex, bridgeAmount);
     vm.stopPrank();
   }
 
-  function test_bridgeHypeFromCoreToEvm_revertsWhenNotPaused(uint256 bridgeAmount) public {
+  function test_bridgeAssetFromCoreToEvm_revertsWhenNotPaused(uint64 assetIndex, uint256 bridgeAmount) public {
     // Validate that the fulfillmentVault is not paused
     assertFalse(fulfillmentVault.paused(), "FulfillmentVault should not be paused");
 
-    // Keeper attempts to call bridgeHypeFromCoreToEvm() when the fulfillmentVault is not paused
+    // Keeper attempts to call bridgeAssetFromCoreToEvm() when the fulfillmentVault is not paused
     vm.startPrank(keeper);
     vm.expectRevert(abi.encodeWithSelector(PausableUpgradeable.ExpectedPause.selector));
-    fulfillmentVault.bridgeHypeFromCoreToEvm(bridgeAmount);
+    fulfillmentVault.bridgeAssetFromCoreToEvm(assetIndex, bridgeAmount);
     vm.stopPrank();
   }
 
-  function test_bridgeHypeFromCoreToEvm(uint256 hypeBalance, uint256 bridgeAmount) public {
+  function test_bridgeAssetFromCoreToEvm_hype(uint256 hypeBalance, uint256 bridgeAmount) public {
     // Ensure hypeBalance doesn't overflow or underflow
     hypeBalance = uint256(bound(hypeBalance, 1e10, uint256(type(uint64).max)) * 1e10);
 
@@ -303,8 +344,7 @@ contract FulfillmentVaultTest is BaseTest {
     uint64 hypeBalance64 = HLConversions.evmToWei(HYPE_TOKEN_INDEX, hypeBalance);
     hyperCore.forceSpotBalance(address(fulfillmentVault), HYPE_TOKEN_INDEX, hypeBalance64);
 
-    // Set fulfillmentVault's USDC balance on core
-    // uint64 usdcBalance64 = HLConversions.evmToWei(USDC_TOKEN_INDEX, 1e18);
+    // Set fulfillmentVault's USDC balance on core of $1
     hyperCore.forceSpotBalance(address(fulfillmentVault), USDC_TOKEN_INDEX, 1e8);
 
     // Validate that the fulfillmentVault has the hype balance on core
@@ -314,7 +354,7 @@ contract FulfillmentVaultTest is BaseTest {
     // Keeper pauses the fulfillmentVault and calls bridgeHypeFromCoreToEvm() with bridgeAmount
     vm.startPrank(keeper);
     fulfillmentVault.setPaused(true);
-    fulfillmentVault.bridgeHypeFromCoreToEvm(bridgeAmount);
+    fulfillmentVault.bridgeAssetFromCoreToEvm(HYPE_TOKEN_INDEX, bridgeAmount);
     vm.stopPrank();
 
     // Move to the next block,
@@ -323,6 +363,38 @@ contract FulfillmentVaultTest is BaseTest {
 
     // Validate that the fulfillmentVault has the bridgeAmount of hype on evm (rounded to within 1e10 precision)
     assertApproxEqAbs(address(fulfillmentVault).balance, bridgeAmount, 1e10, "FulfillmentVault should have the bridgeAmount of hype on evm");
+  }
+
+  function test_bridgeHypeFromCoreToEvm_ubtc(uint256 ubtcBalance, uint256 bridgeAmount) public {
+    // Ensure ubtcBalance doesn't overflow or underflow // Since wei-decimals is 10 but evm decimals is 2, we divide by 1e2 to get the correct balance
+    ubtcBalance = uint256(bound(ubtcBalance, 100, uint256(type(uint64).max) / 1e2));
+
+    // Make sure bridgeAmount is less than or equal to ubtcBalance
+    bridgeAmount = uint256(bound(bridgeAmount, 100, ubtcBalance));
+
+    // Set fulfillmentVault's ubtc balance on core
+    uint64 ubtcBalance64 = HLConversions.evmToWei(UBTC_TOKEN_INDEX, ubtcBalance);
+    hyperCore.forceSpotBalance(address(fulfillmentVault), UBTC_TOKEN_INDEX, ubtcBalance64);
+
+    // // Set fulfillmentVault's USDC balance on core of $1
+    hyperCore.forceSpotBalance(address(fulfillmentVault), USDC_TOKEN_INDEX, 1e8);
+
+    // Validate that the fulfillmentVault has the ubtc balance on core
+    PrecompileLib.SpotBalance memory balance = PrecompileLib.spotBalance(address(fulfillmentVault), UBTC_TOKEN_INDEX);
+    assertEq(balance.total, ubtcBalance64, "FulfillmentVault should have the ubtc balance on core");
+
+    // Keeper pauses the fulfillmentVault and calls bridgeAssetFromCoreToEvm() with bridgeAmount
+    vm.startPrank(keeper);
+    fulfillmentVault.setPaused(true);
+    fulfillmentVault.bridgeAssetFromCoreToEvm(UBTC_TOKEN_INDEX, bridgeAmount);
+    vm.stopPrank();
+
+    // Move to the next block,
+    // Performing all queued CoreWriter and bridging actions
+    CoreSimulatorLib.nextBlock();
+
+    // Validate that the fulfillmentVault has the bridgeAmount of ubtc on evm (rounded to within 100 precision [rounded down when transferred to evm])
+    assertEq(ubtc.balanceOf(address(fulfillmentVault)), bridgeAmount, "FulfillmentVault should have the bridgeAmount of ubtc on evm");
   }
 
   function test_burnUsdx_revertsWhenDoesNotHaveKeeperRole(address caller, uint256 amount) public {
@@ -447,35 +519,35 @@ contract FulfillmentVaultTest is BaseTest {
     assertEq(usdt.balanceOf(address(fulfillmentVault)), withdrawAmount, "FulfillmentVault should be holding the withdrawn usdt amount");
   }
 
-  function test_bridgeUsdTokenToCore_revertsWhenDoesNotHaveKeeperRole(address caller, address usdToken, uint256 amount)
+  function test_bridgeAssetFromEvmToCore_revertsWhenDoesNotHaveKeeperRole(address caller, address usdToken, uint256 amount)
     public
   {
     // Ensure the caller does not have the KEEPER_ROLE
     vm.assume(fulfillmentVault.hasRole(fulfillmentVault.KEEPER_ROLE(), caller) == false);
 
-    // Attempt to call bridgeUsdTokenToCore() without the KEEPER_ROLE
+    // Attempt to call bridgeAssetFromEvmToCore() without the KEEPER_ROLE
     vm.startPrank(caller);
     vm.expectRevert(
       abi.encodeWithSelector(
         IAccessControl.AccessControlUnauthorizedAccount.selector, caller, fulfillmentVault.KEEPER_ROLE()
       )
     );
-    fulfillmentVault.bridgeUsdTokenToCore(usdToken, amount);
+    fulfillmentVault.bridgeAssetFromEvmToCore(usdToken, amount);
     vm.stopPrank();
   }
 
-  function test_bridgeUsdTokenToCore_revertsWhenNotPaused(address usdToken, uint256 amount) public {
+  function test_bridgeAssetFromEvmToCore_revertsWhenNotPaused(address usdToken, uint256 amount) public {
     // Validate that the fulfillmentVault is not paused
     assertFalse(fulfillmentVault.paused(), "FulfillmentVault should not be paused");
 
-    // Attempt to call bridgeUsdTokenToCore() when the fulfillmentVault is not paused
+    // Attempt to call bridgeAssetFromEvmToCore() when the fulfillmentVault is not paused
     vm.startPrank(keeper);
     vm.expectRevert(abi.encodeWithSelector(PausableUpgradeable.ExpectedPause.selector));
-    fulfillmentVault.bridgeUsdTokenToCore(usdToken, amount);
+    fulfillmentVault.bridgeAssetFromEvmToCore(usdToken, amount);
     vm.stopPrank();
   }
 
-  function test_bridgeUsdTokenToCore(uint128 usdxAmount) public {
+  function test_bridgeAssetFromEvmToCore(uint128 usdxAmount) public {
     // Ensure usdxAmount is greater than $1 and leq to $100m
     usdxAmount = uint128(bound(usdxAmount, 1e18, 100e6 * 1e18));
 
@@ -504,9 +576,9 @@ contract FulfillmentVaultTest is BaseTest {
     // Collect the usdt balance of the fulfillmentVault (won't equal $5 because some of the burnt usdx will be converted to usdh)
     uint256 usdtBalance = usdt.balanceOf(address(fulfillmentVault));
 
-    // Keeper calls bridgeUsdTokenToCore() with token and amount
+    // Keeper calls bridgeAssetFromEvmToCore() with token and amount
     vm.startPrank(keeper);
-    fulfillmentVault.bridgeUsdTokenToCore(address(usdt), usdtBalance);
+    fulfillmentVault.bridgeAssetFromEvmToCore(address(usdt), usdtBalance);
     vm.stopPrank();
 
     // Move to the next block,
@@ -703,7 +775,7 @@ contract FulfillmentVaultTest is BaseTest {
     // Keeper bridges usdt to core
     {
       vm.startPrank(keeper);
-      fulfillmentVault.bridgeUsdTokenToCore(address(usdt), usdtAmount);
+      fulfillmentVault.bridgeAssetFromEvmToCore(address(usdt), usdtAmount);
       vm.stopPrank();
     }
 
@@ -754,7 +826,7 @@ contract FulfillmentVaultTest is BaseTest {
     // Keeper transfers hype to evm
     {
       vm.startPrank(keeper);
-      fulfillmentVault.bridgeHypeFromCoreToEvm(100e18);
+      fulfillmentVault.bridgeAssetFromCoreToEvm(HYPE_TOKEN_INDEX, 100e18);
       vm.stopPrank();
     }
 
@@ -772,7 +844,7 @@ contract FulfillmentVaultTest is BaseTest {
     // Keeper approves fulfillment vault's whype to the origination pool
     {
       vm.startPrank(keeper);
-      fulfillmentVault.approveWhype();
+      fulfillmentVault.approveAssetToOrderPool(address(whype));
       vm.stopPrank();
     }
 

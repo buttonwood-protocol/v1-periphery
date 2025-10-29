@@ -149,9 +149,9 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
 
   /// @inheritdoc IFulfillmentVault
   /// @dev Does not need a keeper role or paused-state
-  function approveWhype() external {
-    emit AssetApproved(wrappedNativeToken());
-    IWNT(wrappedNativeToken()).approve(orderPool(), type(uint256).max);
+  function approveAssetToOrderPool(address asset) external {
+    emit AssetApproved(asset);
+    IERC20(asset).approve(orderPool(), type(uint256).max);
   }
 
   /// @inheritdoc IFulfillmentVault
@@ -162,10 +162,18 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
   }
 
   /// @inheritdoc IFulfillmentVault
-  function bridgeHypeFromCoreToEvm(uint256 amount) external override onlyRole(KEEPER_ROLE) whenPaused 
+  /// @dev Does not need a keeper role or paused-state
+  function unwrapHype() external {
+    uint256 whypeBalance = IERC20(wrappedNativeToken()).balanceOf(address(this));
+    emit WhypeUnwrapped(whypeBalance);
+    IWNT(wrappedNativeToken()).withdraw(whypeBalance);
+  }
+
+  /// @inheritdoc IFulfillmentVault
+  function bridgeAssetFromCoreToEvm(uint64 assetIndex, uint256 amount) external override onlyRole(KEEPER_ROLE) whenPaused 
   {
-    emit AssetBridgedFromCoreToEvm(HLConstants.hypeTokenIndex(), amount);
-    CoreWriterLib.bridgeToEvm(HLConstants.hypeTokenIndex(), amount, true);
+    emit AssetBridgedFromCoreToEvm(assetIndex, amount);
+    CoreWriterLib.bridgeToEvm(assetIndex, amount, true);
   }
 
   /// @inheritdoc IFulfillmentVault
@@ -181,9 +189,9 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
   }
 
   /// @inheritdoc IFulfillmentVault
-  function bridgeUsdTokenToCore(address usdToken, uint256 amount) external override onlyRole(KEEPER_ROLE) whenPaused {
-    emit AssetBridgedFromEvmToCore(usdToken, amount);
-    CoreWriterLib.bridgeToCore(usdToken, amount);
+  function bridgeAssetFromEvmToCore(address asset, uint256 amount) external override onlyRole(KEEPER_ROLE) whenPaused {
+    emit AssetBridgedFromEvmToCore(asset, amount);
+    CoreWriterLib.bridgeToCore(asset, amount);
   }
 
   /// @inheritdoc IFulfillmentVault
@@ -208,20 +216,3 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
     IOrderPool(orderPool()).processOrders(indices, hintPrevIdsList);
   }
 }
-
-/**
- * FulfillmentVault:
- * - Keeper Functions:
- *   - Buy hype via usdc
- *   - Transfer Hype to evm
- *   - Wrap hype into whype
- *   - Approve whype to order pool (maybe we infinite approve this)
- *   - Fill order
- *   - Unwrap USDX (burn it into usd-tokens)
- *   - Transfer usd-tokens to core
- *   - Trade usd tokens to usdc
- * - Special Considerations:
- *   - Need to temporarily pause withdrawals while processing orders. So need a withdrawal queue.
- *   - Not just withdrawing usdx + hype, but balances from hypercore...
- *   - Protocol fee in here?
- */

@@ -9,6 +9,12 @@ interface IWNT is IERC20 {
   function deposit() external payable;
 
   /**
+   * @notice Withdraw native tokens from the WNT contract
+   * @param wad The amount of WNT to withdraw
+   */
+  function withdraw(uint256 wad) external;
+
+  /**
    * @notice Approve a spender to spend a certain amount of WNT
    * @param guy The address of the spender
    * @param wad The amount of WNT to approve

@@ -8,56 +8,38 @@ Periphery consists of:
 
 ## Documentation
 
-https://book.getfoundry.sh/
+### Design Consideratiosn:
 
-## Usage
+**LiquidityVault:**
+- General Functions:
+  - Deposit [USD token] -> USDX
+  - Withdraw
+- Admin Functions:
+  - Enable/Disable Whitelist
+  - Add/Remove Whitelist addresses
+  - Pause/Unpause the contract
+- Special Considerations:
+  - Keepers need to collect a fee to perform operations
 
-### Build
+**FulfillmentVault:**
+- Keeper Functions:
+  - Buy hype via usdc
+  - Transfer Hype to evm
+  - Wrap hype into whype
+  - Approve whype to order pool (maybe we infinite approve this)
+  - Fill order
+  - Unwrap USDX (burn it into usd-tokens)
+  - Transfer usd-tokens to core
+  - Trade usd tokens to usdc
+- Special Considerations:
+  - Need to temporarily pause withdrawals while processing orders. So need a withdrawal queue.
+  - Not just withdrawing usdx + hype, but balances from hypercore...
+  - Protocol fee in here?
 
-```shell
-$ forge build
-```
-
-### Test
-
-```shell
-$ forge test
-```
-
-### Format
-
-```shell
-$ forge fmt
-```
-
-### Gas Snapshots
-
-```shell
-$ forge snapshot
-```
-
-### Anvil
-
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+**RolloverVault:**
+- Keeper Functions:
+  - Enter origination pool
+  - Exit origination pool [Permissionless]
+- Special Considerations:
+  - Not just withdrawing usdx + consol, but also all of the OGPool receipt tokens
+  - Need to configure a % usable in each epoch (this way there is always an ogpool available)

@@ -41,9 +41,10 @@ interface IFulfillmentVault is ILiquidityVault, IFulfillmentVaultEvents {
   function nonce() external view returns (uint128);
 
   /**
-   * @notice Approves whype to the order pool
+   * @notice Approves an asset to the order pool
+   * @param asset The address of the asset to approve
    */
-  function approveWhype() external;
+  function approveAssetToOrderPool(address asset) external;
 
   /**
    * @notice Wraps entire hype balance of the fulfillment vault into whype
@@ -51,10 +52,16 @@ interface IFulfillmentVault is ILiquidityVault, IFulfillmentVaultEvents {
   function wrapHype() external;
 
   /**
-   * @notice Bridges hype from core to evm
-   * @param amount The amount of hype to bridge (in evm units)
+   * @notice Unwraps entire whype balance of the fulfillment vault into hype
    */
-  function bridgeHypeFromCoreToEvm(uint256 amount) external;
+  function unwrapHype() external;
+
+  /**
+   * @notice Bridges an asset from core to evm
+   * @param assetIndex The index of the asset to bridge
+   * @param amount The amount of asset to bridge (in evm units)
+   */
+  function bridgeAssetFromCoreToEvm(uint64 assetIndex, uint256 amount) external;
 
   /**
    * @notice Burns USDX into usdTokens for the purpose of transferring them to core
@@ -71,11 +78,11 @@ interface IFulfillmentVault is ILiquidityVault, IFulfillmentVaultEvents {
   function withdrawUsdTokenFromUsdx(address usdToken, uint256 amount) external;
 
   /**
-   * @notice Bridges usdTokens to core
-   * @param usdToken The address of the usdToken to bridge
-   * @param amount The amount of usdToken to bridge
+   * @notice Bridges assets from evm to core
+   * @param asset The address of the asset to bridge
+   * @param amount The amount of asset to bridge
    */
-  function bridgeUsdTokenToCore(address usdToken, uint256 amount) external;
+  function bridgeAssetFromEvmToCore(address asset, uint256 amount) external;
 
   /**
    * @notice Trades tokens on core
@@ -93,22 +100,3 @@ interface IFulfillmentVault is ILiquidityVault, IFulfillmentVaultEvents {
    */
   function fillOrder(uint256 index, uint256[] memory hintPrevIds) external;
 }
-
-// ToDo: GENERALIZE TO BUYING MORE THAN JUST HYPE
-
-/**
- * FulfillmentVault:
- * - Keeper Functions:
- *   - Buy hype via usdc
- *   - Transfer Hype to evm
- *   - Wrap hype into whype
- *   - Approve whype to order pool (maybe we infinite approve this)
- *   - Fill order
- *   - Unwrap USDX (burn it into usd-tokens)
- *   - Transfer usd-tokens to core
- *   - Trade usd tokens to usdc
- * - Special Considerations:
- *   - Need to temporarily pause withdrawals while processing orders. So need a withdrawal queue.
- *   - Not just withdrawing usdx + hype, but balances from hypercore...
- *   - Protocol fee in here?
- */

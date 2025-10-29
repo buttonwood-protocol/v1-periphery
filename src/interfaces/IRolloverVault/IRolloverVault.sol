@@ -62,13 +62,3 @@ interface IRolloverVault is ILiquidityVault, IRolloverVaultEvents, IRolloverVaul
    */
   function redeemOriginationPool(address originationPool) external;
 }
-
-/**
- * RolloverVault:
- * - Keeper Functions:
- *   - Enter origination pool
- *   - Exit origination pool [Permissionless]
- * - Special Considerations:
- *   - Not just withdrawing usdx + consol, but also all of the OGPool receipt tokens
- *   - Need to configure a % usable in each epoch (this way there is always an ogpool available)
- */

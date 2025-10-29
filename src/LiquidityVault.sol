@@ -298,16 +298,3 @@ abstract contract LiquidityVault is
     }
   }
 }
-
-/**
- * LiquidityVault:
- * - General Functions:
- *   - Deposit [USD token] -> USDX
- *   - Withdraw
- *  - Admin Functions:
- *   - Enable/Disable Whitelist
- *   - Add/Remove Whitelist addresses
- *   - Pause/Unpause the contract
- * - Special Considerations:
- *   - Keepers need to collect a fee to perform operations.s
- */
