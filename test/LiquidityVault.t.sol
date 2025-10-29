@@ -395,4 +395,40 @@ contract LiquidityVaultTest is Test {
     assertEq(depositableAsset.balanceOf(user), 0, "Depositable asset balance of user should be 0");
     assertEq(redeemableAsset.balanceOf(user), depositAmount, "Redeemable asset balance of user should be depositAmount");
   }
+
+  function test_updateAsset_add(address asset, bool isRedeemable) public {
+    // Update the assets
+    MockLiquidityVault(address(liquidityVault)).updateAssets(asset, isRedeemable, true);
+
+    if (isRedeemable) {
+      assertEq(liquidityVault.redeemableAssets().length, 2, "Redeemable assets should have length 2");
+      assertEq(liquidityVault.redeemableAssets()[0], address(redeemableAsset), "redeemableAssets[0] should be the redeemable asset");
+      assertEq(liquidityVault.redeemableAssets()[1], asset, "redeemableAssets[1] should be the asset passed in");
+    } else {
+      assertEq(liquidityVault.depositableAssets().length, 2, "Depositable assets should have length 2");
+      assertEq(liquidityVault.depositableAssets()[0], address(depositableAsset), "depositableAssets[0] should be the depositable asset");
+      assertEq(liquidityVault.depositableAssets()[1], asset, "depositableAssets[1] should be the asset passed in");
+    }
+  }
+
+  function test_updateAsset_remove(bool isRedeemable) public {
+    // Update the assets
+    address asset = isRedeemable ? address(redeemableAsset) : address(depositableAsset);
+    MockLiquidityVault(address(liquidityVault)).updateAssets(asset, isRedeemable, false);
+
+    if (isRedeemable) {
+      assertEq(liquidityVault.redeemableAssets().length, 0, "Redeemable assets should have length 2");
+    } else {
+      assertEq(liquidityVault.depositableAssets().length, 0, "Depositable assets should have length 0");
+    }
+  }
+
+  function test_updateAsset_removeMissingAsset(address asset, bool isRedeemable) public {
+    // Make sure the asset is not the depositable asset or redeemable asset
+    vm.assume(asset != address(depositableAsset) && asset != address(redeemableAsset));
+
+    // Attempt to remove a missing asset
+    vm.expectRevert();
+    MockLiquidityVault(address(liquidityVault)).updateAssets(asset, isRedeemable, false);
+  }
 }

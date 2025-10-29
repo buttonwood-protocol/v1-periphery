@@ -8,6 +8,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IGeneralManager} from "@core/interfaces/IGeneralManager/IGeneralManager.sol";
 import {IOriginationPool} from "@core/interfaces/IOriginationPool/IOriginationPool.sol";
 import {IOriginationPoolScheduler} from "@core/interfaces/IOriginationPoolScheduler/IOriginationPoolScheduler.sol";
+
 /**
  * @title FulfillmentVault
  * @author @SocksNFlops
@@ -179,6 +180,8 @@ contract RolloverVault is LiquidityVault, IRolloverVault {
     if ($._poolIndex[originationPool] == 0) {
       $._poolIndex[originationPool] = $._originationPools.length + 1;
       $._originationPools.push(originationPool);
+      // Update the assets
+      _updateAssets(originationPool, true, true);
       // Emit the origination pool added event
       emit OriginationPoolAdded(originationPool);
     }
@@ -206,6 +209,9 @@ contract RolloverVault is LiquidityVault, IRolloverVault {
     $._poolIndex[$._originationPools[$._poolIndex[originationPool] - 1]] = $._poolIndex[originationPool];
     delete $._poolIndex[originationPool];
     $._originationPools.pop();
+
+    // Update the assets
+    _updateAssets(originationPool, true, false);
 
     // Emit the redeem event
     uint256 ogPoolBalance = IOriginationPool(originationPool).balanceOf(address(this));

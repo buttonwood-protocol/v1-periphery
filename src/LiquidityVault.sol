@@ -202,6 +202,33 @@ abstract contract LiquidityVault is
     return _getLiquidityVaultStorage()._redeemableAssets;
   }
 
+  function _updateAssets(address asset, bool isRedeemable, bool add) internal {
+    // Fetch storage
+    LiquidityVaultStorage storage $ = _getLiquidityVaultStorage();
+
+    if (isRedeemable) {
+      if (add) {
+        $._redeemableAssets.push(asset);
+        $._redeemableAssetIndex[asset] = $._redeemableAssets.length;
+      } else {
+        $._redeemableAssets[$._redeemableAssetIndex[asset] - 1] = $._redeemableAssets[$._redeemableAssets.length - 1];
+        $._redeemableAssetIndex[$._redeemableAssets[$._redeemableAssets.length - 1]] = $._redeemableAssetIndex[asset];
+        $._redeemableAssets.pop();
+        $._redeemableAssetIndex[asset] = 0;
+      }
+    } else {
+      if (add) {
+        $._depositableAssets.push(asset);
+        $._depositableAssetIndex[asset] = $._depositableAssets.length;
+      } else {
+        $._depositableAssets[$._depositableAssetIndex[asset] - 1] = $._depositableAssets[$._depositableAssets.length - 1];
+        $._depositableAssetIndex[$._depositableAssets[$._depositableAssets.length - 1]] = $._depositableAssetIndex[asset];
+        $._depositableAssets.pop();
+        $._depositableAssetIndex[asset] = 0;
+      }
+    }
+  }
+
   function _totalAssets() internal view virtual returns (uint256);
 
   /// @inheritdoc ILiquidityVault

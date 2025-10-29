@@ -18,6 +18,10 @@ contract MockLiquidityVault2 is LiquidityVault {
     return total;
   }
 
+  function updateAssets(address asset, bool isRedeemable, bool isAdd) public {
+    _updateAssets(asset, isRedeemable, isAdd);
+  }
+
   function newFunction() public pure returns (bool) {
     return true;
   }

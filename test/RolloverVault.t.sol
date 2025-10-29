@@ -27,8 +27,10 @@ import {Router} from "../src/Router.sol";
 import {MockPriceOracle} from "./mocks/MockPriceOracle.sol";
 import {CreationRequest, BaseRequest} from "@core/types/orders/OrderRequests.sol";
 import {IOriginationPoolScheduler} from "@core/interfaces/IOriginationPoolScheduler/IOriginationPoolScheduler.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 contract RolloverVaultTest is BaseTest {
+  using Math for uint256;
   HyperCore public hyperCore;
 
   using PrecompileLib for address;
@@ -393,12 +395,27 @@ contract RolloverVaultTest is BaseTest {
       vm.stopPrank();
     }
 
+    // Check that redeemable assets are set correctly
+    {
+      assertEq(rolloverVault.redeemableAssets().length, 2, "RolloverVault should have 2 redeemable assets");
+      assertEq(rolloverVault.redeemableAssets()[0], address(usdx), "RolloverVault should have usdx as the first redeemable asset");
+      assertEq(rolloverVault.redeemableAssets()[1], address(consol), "RolloverVault should have consol as the second redeemable asset");
+    }
+
     // Keeper pauses the rolloverVault and deposits the entire usdx balance into the origination pool
     {
       vm.startPrank(keeper);
       rolloverVault.setPaused(true);
       rolloverVault.depositOriginationPool(address(originationPool), depositAmount);
       vm.stopPrank();
+    }
+
+    // Check that redeemable assets have been updated correctly
+    {
+      assertEq(rolloverVault.redeemableAssets().length, 3, "RolloverVault should have 3 redeemable assets");
+      assertEq(rolloverVault.redeemableAssets()[0], address(usdx), "RolloverVault should have usdx as the first redeemable asset");
+      assertEq(rolloverVault.redeemableAssets()[1], address(consol), "RolloverVault should have consol as the second redeemable asset");
+      assertEq(rolloverVault.redeemableAssets()[2], address(originationPool), "RolloverVault should have the origination pool as the third redeemable asset");
     }
 
     // Skip time ahead to the origination pool's redemption period
@@ -411,9 +428,120 @@ contract RolloverVaultTest is BaseTest {
     rolloverVault.redeemOriginationPool(address(originationPool));
     vm.stopPrank();
 
+    // Check that redeemable assets have been updated correctly
+    {
+      assertEq(rolloverVault.redeemableAssets().length, 2, "RolloverVault should have 2 redeemable assets");
+      assertEq(rolloverVault.redeemableAssets()[0], address(usdx), "RolloverVault should have usdx as the first redeemable asset");
+      assertEq(rolloverVault.redeemableAssets()[1], address(consol), "RolloverVault should have consol as the second redeemable asset");
+    }
+
     // Validate that the origination pool has been removed
     assertFalse(rolloverVault.isTracked(address(originationPool)), "Origination pool should not be tracked");
     assertEq(rolloverVault.originationPools().length, 0, "Origination pool should not be tracked");
     assertEq(originationPool.balanceOf(address(rolloverVault)), 0, "Origination pool should have no balance");
+  }
+
+  function test_totalAssets_whileTrackingOriginationPool(uint256 depositAmount) public {
+    // Ensure the depositAmount is at least $1 but less than the origination pool limit
+    depositAmount = uint256(bound(depositAmount, 1e18, originationPool.poolLimit()));
+
+    // User deposits depositAmount of usdx into the rolloverVault
+    {
+      vm.startPrank(user);
+      uint256 usdtAmount = usdx.convertUnderlying(address(usdt), depositAmount);
+      deal(address(usdt), user, usdtAmount);
+      usdt.approve(address(usdx), usdtAmount);
+      usdx.deposit(address(usdt), usdtAmount);
+      usdx.approve(address(rolloverVault), depositAmount);
+      rolloverVault.deposit(address(usdx), depositAmount);
+      vm.stopPrank();
+    }
+
+    // Query total assets in the rolloverVault
+    uint256 totalAssetsBefore = rolloverVault.totalAssets();
+
+    // Keeper pauses the rolloverVault and deposits the entire usdx balance into the origination pool
+    {
+      vm.startPrank(keeper);
+      rolloverVault.setPaused(true);
+      rolloverVault.depositOriginationPool(address(originationPool), depositAmount);
+      vm.stopPrank();
+    }
+
+    // Query total assets in the rolloverVault
+    uint256 totalAssetsAfter = rolloverVault.totalAssets();
+
+    // Validate that total assets have not changed
+    assertEq(totalAssetsAfter, totalAssetsBefore, "Total assets should not have changed");
+  }
+
+  function test_withdraw_whileTrackingOriginationPool(uint256 depositAmount) public {
+    // Ensure the depositAmount is at least $1 but less than the origination pool limit
+    depositAmount = uint256(bound(depositAmount, 1e18, originationPool.poolLimit()));
+
+    // Validate that the user has 0 usdx balance to start with
+    assertEq(usdx.balanceOf(user), 0, "User should have 0 usdx balance to start with");
+
+    // User deposits depositAmount of usdx into the rolloverVault
+    {
+      vm.startPrank(user);
+      uint256 usdtAmount = usdx.convertUnderlying(address(usdt), depositAmount);
+      deal(address(usdt), user, usdtAmount);
+      usdt.approve(address(usdx), usdtAmount);
+      usdx.deposit(address(usdt), usdtAmount);
+      usdx.approve(address(rolloverVault), usdx.balanceOf(user));
+      rolloverVault.deposit(address(usdx), usdx.balanceOf(user));
+      vm.stopPrank();
+    }
+
+    // Validate that the user has 0 usdx balance
+    assertEq(usdx.balanceOf(user), 0, "User should have 0 usdx balance");
+
+    // Keeper pauses the rolloverVault and deposits the entire usdx balance into the origination pool
+    {
+      vm.startPrank(keeper);
+      rolloverVault.setPaused(true);
+      rolloverVault.depositOriginationPool(address(originationPool), depositAmount);
+      vm.stopPrank();
+    }
+
+    // Keeper unpauses the rolloverVault
+    {
+      vm.startPrank(keeper);
+      rolloverVault.setPaused(false);
+      vm.stopPrank();
+    }
+
+    // Calculate expected redemption amounts
+    uint256 expectedUsdxRedemption = Math.mulDiv(rolloverVault.balanceOf(user), usdx.balanceOf(address(rolloverVault)), rolloverVault.totalSupply());
+    uint256 expectedOgpRedemption = Math.mulDiv(rolloverVault.balanceOf(user), originationPool.balanceOf(address(rolloverVault)), rolloverVault.totalSupply());
+
+    // Expected total assets amount
+    uint256 expectedTotalAssets = Math.mulDiv(rolloverVault.balanceOf(user), rolloverVault.totalAssets(), rolloverVault.totalSupply());
+
+    // User withdraws their entire balance of the rolloverVault
+    {
+      vm.startPrank(user);
+      rolloverVault.redeem(rolloverVault.balanceOf(user));
+      vm.stopPrank();
+    }
+
+    // Validate that the user has the expected redemption amounts
+    assertApproxEqAbs(usdx.balanceOf(user), expectedUsdxRedemption, 1, "User should get expectedUsdxRedemption usdx out of the rolloverVault");
+    assertApproxEqAbs(originationPool.balanceOf(user), expectedOgpRedemption, 1, "User should get expectedOgpRedemption origination pool out of the rolloverVault");
+
+    // Skip ahead to the origination pool's redemption period
+    vm.warp(originationPool.redemptionPhaseTimestamp());
+
+    // User redeems the entire origination pool balance
+    {
+      vm.startPrank(user);
+      originationPool.redeem(originationPool.balanceOf(user));
+      vm.stopPrank();
+    }
+
+    // Validate that the user has the expected redemption amounts
+    assertEq(originationPool.balanceOf(user), 0, "User should have 0 origination pool balance");
+    assertApproxEqAbs(usdx.balanceOf(user), expectedTotalAssets, 1, "User should have expectedTotalAssets of usdx");
   }
 }
