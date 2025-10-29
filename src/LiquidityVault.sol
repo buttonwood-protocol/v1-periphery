@@ -179,6 +179,7 @@ abstract contract LiquidityVault is
 
   /// @inheritdoc ILiquidityVault
   function setWhitelistEnforced(bool enforced) external virtual override onlyRole(DEFAULT_ADMIN_ROLE) {
+    emit WhitelistEnforced(enforced);
     _getLiquidityVaultStorage()._whitelistEnforced = enforced;
   }
 
@@ -216,6 +217,7 @@ abstract contract LiquidityVault is
         $._redeemableAssets.pop();
         $._redeemableAssetIndex[asset] = 0;
       }
+      emit RedeemableAssetsUpdated($._redeemableAssets);
     } else {
       if (add) {
         $._depositableAssets.push(asset);
@@ -226,6 +228,7 @@ abstract contract LiquidityVault is
         $._depositableAssets.pop();
         $._depositableAssetIndex[asset] = 0;
       }
+      emit DepositableAssetsUpdated($._depositableAssets);
     }
   }
 

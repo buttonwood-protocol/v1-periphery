@@ -150,33 +150,39 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
   /// @inheritdoc IFulfillmentVault
   /// @dev Does not need a keeper role or paused-state
   function approveWhype() external {
+    emit AssetApproved(wrappedNativeToken());
     IWNT(wrappedNativeToken()).approve(orderPool(), type(uint256).max);
   }
 
   /// @inheritdoc IFulfillmentVault
   /// @dev Does not need a keeper role or paused-state
   function wrapHype() external {
+    emit HypeWrapped(address(this).balance);
     IWNT(wrappedNativeToken()).deposit{value: address(this).balance}();
   }
 
   /// @inheritdoc IFulfillmentVault
   function bridgeHypeFromCoreToEvm(uint256 amount) external override onlyRole(KEEPER_ROLE) whenPaused 
   {
+    emit AssetBridgedFromCoreToEvm(HLConstants.hypeTokenIndex(), amount);
     CoreWriterLib.bridgeToEvm(HLConstants.hypeTokenIndex(), amount, true);
   }
 
   /// @inheritdoc IFulfillmentVault
   function burnUsdx(uint256 amount) external override onlyRole(KEEPER_ROLE) whenPaused {
+    emit UsdxBurned(amount);
     IUSDX(usdx()).burn(amount);
   }
 
   // @inheritdoc IFulfillmentVault
   function withdrawUsdTokenFromUsdx(address usdToken, uint256 amount) external override onlyRole(KEEPER_ROLE) whenPaused {
+    emit UsdTokenWithdrawnFromUsdx(usdToken, amount);
     IUSDX(usdx()).withdraw(usdToken, amount);
   }
 
   /// @inheritdoc IFulfillmentVault
   function bridgeUsdTokenToCore(address usdToken, uint256 amount) external override onlyRole(KEEPER_ROLE) whenPaused {
+    emit AssetBridgedFromEvmToCore(usdToken, amount);
     CoreWriterLib.bridgeToCore(usdToken, amount);
   }
 
@@ -184,6 +190,8 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
   function tradeOnCore(uint32 index, bool isBuy, uint32 limitPx, uint64 sz) external override onlyRole(KEEPER_ROLE) whenPaused {
     // Get storage
     FulfillmentVaultStorage storage $ = _getFulfillmentVaultStorage();
+    // Emit event
+    emit TradeOnCore(index, isBuy, limitPx, sz, $._nonce);
     // Place an IOC limit order to trade usdc for asset on core
     CoreWriterLib.placeLimitOrder(HLConversions.spotToAssetId(index), isBuy, limitPx, sz, false, 3, $._nonce);
     $._nonce++;
@@ -195,6 +203,8 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
     indices[0] = index;
     uint256[][] memory hintPrevIdsList = new uint256[][](1);
     hintPrevIdsList[0] = hintPrevIds;
+    // Emit event
+    emit OrderFilled(index, hintPrevIds);
     IOrderPool(orderPool()).processOrders(indices, hintPrevIdsList);
   }
 }
