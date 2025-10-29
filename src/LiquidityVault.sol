@@ -15,8 +15,6 @@ import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/Pau
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-// ToDo: Put admin in the initializer
-
 /**
  * @title LiquidityVault
  * @author @SocksNFlops
@@ -56,7 +54,6 @@ abstract contract LiquidityVault is
     mapping(address => uint256) _depositableAssetIndex;
     address[] _redeemableAssets;
     mapping(address => uint256) _redeemableAssetIndex;
-
     bool _whitelistEnforced;
   }
 
@@ -134,10 +131,11 @@ abstract contract LiquidityVault is
     uint8 _decimals,
     uint8 _decimalsOffset,
     address[] memory _depositableAssets,
-    address[] memory _redeemableAssets
+    address[] memory _redeemableAssets,
+    address admin
   ) external virtual initializer {
     __LiquidityVault_init(name, symbol, _decimals, _decimalsOffset, _depositableAssets, _redeemableAssets);
-    _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
+    _grantRole(DEFAULT_ADMIN_ROLE, admin);
   }
 
   /// @custom:oz-upgrades-unsafe-allow constructor

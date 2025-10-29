@@ -64,11 +64,10 @@ contract LiquidityVaultTest is Test {
       DECIMALS,
       DECIMALS_OFFSET,
       depositableAssets,
-      redeemableAssets
+      redeemableAssets,
+      address(admin)
     );
-    vm.startPrank(admin);
     ERC1967Proxy proxy = new ERC1967Proxy(address(liquidityVaultImplementation), initializerData);
-    vm.stopPrank();
     liquidityVault = LiquidityVault(address(proxy));
 
     // Prime the liquidityVault

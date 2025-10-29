@@ -172,11 +172,10 @@ contract RolloverVaultTest is BaseTest {
       SYMBOL,
       DECIMALS,
       DECIMALS_OFFSET,
-      address(generalManager)
+      address(generalManager),
+      address(admin)
     );
-    vm.startPrank(admin);
     ERC1967Proxy proxy = new ERC1967Proxy(address(rolloverVaultImplementation), initializerData);
-    vm.stopPrank();
     rolloverVault = RolloverVault(payable(address(proxy)));
 
     // Prime the rolloverVault
@@ -259,7 +258,7 @@ contract RolloverVaultTest is BaseTest {
 
   function test_depositOriginationPool_revertsWhenOriginationPoolNotRegistered(address originationPool, uint256 amount) public {
     // Ensure the origination pool is not registered
-    assertFalse(IOriginationPoolScheduler(originationPoolScheduler).isRegistered(originationPool), "Origination pool should not be registered");
+    vm.assume(IOriginationPoolScheduler(originationPoolScheduler).isRegistered(originationPool) == false);
 
     // Keeper pauses the rolloverVault
     vm.startPrank(keeper);

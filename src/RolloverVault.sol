@@ -92,16 +92,18 @@ contract RolloverVault is LiquidityVault, IRolloverVault {
    * @param _decimals The decimals of the liquidity vault
    * @param _decimalsOffset The decimals offset for measuring internal precision of shares
    * @param _generalManager The address of the general manager
+   * @param admin The address of the admin
    */
   function initialize(
     string memory name,
     string memory symbol,
     uint8 _decimals,
     uint8 _decimalsOffset,
-    address _generalManager
+    address _generalManager,
+    address admin
   ) external initializer {
     __RolloverVault_init(name, symbol, _decimals, _decimalsOffset, _generalManager);
-    _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
+    _grantRole(DEFAULT_ADMIN_ROLE, admin);
   }
 
   /// @inheritdoc IERC165

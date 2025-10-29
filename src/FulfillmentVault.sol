@@ -96,6 +96,7 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
    * @param _decimalsOffset The decimals offset for measuring internal precision of shares
    * @param _wrappedNativeToken The address of the wrapped native token
    * @param _generalManager The address of the general manager
+   * @param admin The address of the admin
    */
   function initialize(
     string memory name,
@@ -103,10 +104,11 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
     uint8 _decimals,
     uint8 _decimalsOffset,
     address _wrappedNativeToken,
-    address _generalManager
+    address _generalManager,
+    address admin
   ) external initializer {
     __FulfillmentVault_init(name, symbol, _decimals, _decimalsOffset, _wrappedNativeToken, _generalManager);
-    _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
+    _grantRole(DEFAULT_ADMIN_ROLE, admin);
   }
 
   /// @inheritdoc IERC165

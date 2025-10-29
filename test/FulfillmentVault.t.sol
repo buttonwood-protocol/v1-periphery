@@ -172,11 +172,10 @@ contract FulfillmentVaultTest is BaseTest {
       DECIMALS,
       DECIMALS_OFFSET,
       address(whype),
-      address(generalManager)
+      address(generalManager),
+      address(admin)
     );
-    vm.startPrank(admin);
     ERC1967Proxy proxy = new ERC1967Proxy(address(fulfillmentVaultImplementation), initializerData);
-    vm.stopPrank();
     fulfillmentVault = FulfillmentVault(payable(address(proxy)));
 
     // Prime the fulfillmentVault
