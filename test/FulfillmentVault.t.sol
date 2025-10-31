@@ -44,6 +44,7 @@ contract FulfillmentVaultTest is BaseTest {
   address SPOT_INFO_PRECOMPILE_ADDRESS = 0x000000000000000000000000000000000000080b;
   address SPOT_PX_PRECOMPILE_ADDRESS = 0x0000000000000000000000000000000000000808;
   address public TOKEN_REGISTRY_ADDRESS = 0x0b51d1A9098cf8a72C325003F44C194D41d7A85B;
+  address public UBTC_SYSTEM_ADDRESS = 0x20000000000000000000000000000000000000c5;
   uint32 public HYPE_TOKEN_INDEX = uint32(HLConstants.hypeTokenIndex());
   uint32 public USDC_TOKEN_INDEX = 0;
   uint32 public USDT_TOKEN_INDEX = 268;
@@ -103,6 +104,7 @@ contract FulfillmentVaultTest is BaseTest {
     vm.etch(HYPER_CORE_ADDRESS, address(hyperCore).code);
     vm.label(HYPER_CORE_ADDRESS, "HyperCore");
     hyperCore = CoreSimulatorLib.init();
+    hyperCore.setUseRealL1Read(false);
   }
 
   function setupTokenRegistry() internal {
@@ -191,13 +193,16 @@ contract FulfillmentVaultTest is BaseTest {
     vm.stopPrank();
 
     // Force the fulfillmentVault to be activated on hypercore
+    vm.mockCall(HLConstants.CORE_USER_EXISTS_PRECOMPILE_ADDRESS, abi.encode(address(fulfillmentVault)), abi.encode(true));
     CoreSimulatorLib.forceAccountActivation(address(fulfillmentVault));
     
     // Force activate the HYPE system address so bridging works
-    CoreSimulatorLib.forceAccountActivation(0x2222222222222222222222222222222222222222);
+    vm.mockCall(HLConstants.CORE_USER_EXISTS_PRECOMPILE_ADDRESS, abi.encode(HLConstants.HYPE_SYSTEM_ADDRESS), abi.encode(true));
+    CoreSimulatorLib.forceAccountActivation(HLConstants.HYPE_SYSTEM_ADDRESS);
 
     // Force activate the UBTC system address so bridging works
-    CoreSimulatorLib.forceAccountActivation(0x20000000000000000000000000000000000000c5);
+    vm.mockCall(HLConstants.CORE_USER_EXISTS_PRECOMPILE_ADDRESS, abi.encode(UBTC_SYSTEM_ADDRESS), abi.encode(true));
+    CoreSimulatorLib.forceAccountActivation(UBTC_SYSTEM_ADDRESS);
 
     // Grant the fulfillmentVault the orderPool's FULFILLMENT_VAULT_ROLE
     vm.startPrank(admin);
@@ -620,11 +625,10 @@ contract FulfillmentVaultTest is BaseTest {
     vm.stopPrank();
   }
 
-  function test_tradeOnCore_sellUsdt(uint32 limitPx, uint64 sz, uint64 coreSpotBalance) public {
+  function test_tradeOnCore_sellUsdt(uint64 limitPx, uint64 sz, uint64 coreSpotBalance) public {
     // Ensure that coreSpotBalance is geq sz and both are geq 1e8 ( and also don't overflow)
-    coreSpotBalance = uint64(bound(coreSpotBalance, 1e8, type(uint64).max/1e10));
-    limitPx = 1e6;
-    sz = uint64(bound(sz, 1e2, coreSpotBalance / 1e6));
+    coreSpotBalance = uint64(bound(coreSpotBalance, 1, type(uint64).max));
+    sz = uint64(bound(sz, 1, coreSpotBalance));
 
     // Mock the spot px for USDT to be 1:1 with USDC
     mockSpotPx(USDT_TOKEN_INDEX, 1e6);
@@ -650,9 +654,25 @@ contract FulfillmentVaultTest is BaseTest {
     // Performing all queued CoreWriter and bridging actions
     CoreSimulatorLib.nextBlock();
 
-    // Validate that the fulfillmentVault has a balance of usdc on core
-    balance = PrecompileLib.spotBalance(address(fulfillmentVault), USDC_TOKEN_INDEX);
-    assertEq(balance.total, uint256(sz) * 1e6, "FulfillmentVault should have a balance of usdc on core");
+    if (limitPx > 1e8) {
+      // Trade should fail
+      // Validate that the fulfillmentVault has no balance of usdc on core
+      balance = PrecompileLib.spotBalance(address(fulfillmentVault), USDC_TOKEN_INDEX);
+      assertEq(balance.total, 0, "FulfillmentVault should have no balance of usdc on core");
+
+      // Validate that the fulfillmentVault has the same usdt balance on core as before the trade
+      balance = PrecompileLib.spotBalance(address(fulfillmentVault), USDT_TOKEN_INDEX);
+      assertEq(balance.total, coreSpotBalance, "FulfillmentVault should have the same usdt balance on core as before the trade");
+    } else {
+      // Trade should succeed
+      // Validate that the fulfillmentVault has a balance of usdc on core
+      balance = PrecompileLib.spotBalance(address(fulfillmentVault), USDC_TOKEN_INDEX);
+      assertEq(balance.total, uint256(sz), "FulfillmentVault should have a balance of usdc on core");
+
+      // Validate that the fulfillmentVault has correct usdt balance on core
+      balance = PrecompileLib.spotBalance(address(fulfillmentVault), USDT_TOKEN_INDEX);
+      assertEq(balance.total, coreSpotBalance - uint256(sz), "FulfillmentVault should have the correct usdt balance on core");
+    }
   }
 
   function test_fillOrder_revertsWhenDoesNotHaveKeeperRole(address caller, uint256 index, uint256[] memory hintPrevIds) public {
@@ -783,19 +803,31 @@ contract FulfillmentVaultTest is BaseTest {
     // Performing all queued CoreWriter and bridging actions
     CoreSimulatorLib.nextBlock();
 
+    // Validate that the fulfillmentVault has 5k of usdt on core
+    {
+      PrecompileLib.SpotBalance memory spotBalance = PrecompileLib.spotBalance(address(fulfillmentVault), USDT_TOKEN_INDEX);
+      assertEq(spotBalance.total, 5000e8, "FulfillmentVault should have 5k of usdt on core");
+    }
+
     // Mock the spot px for USDT to be 1:1 with USDC
     mockSpotPx(USDT_TOKEN_INDEX, 1e6);
 
     // Keeper trades usdt for usdc on core ($5050 usdt to usdc)
     {
       vm.startPrank(keeper);
-      fulfillmentVault.tradeOnCore(USDT_TOKEN_INDEX, false, 1e6, 5000e2);
+      fulfillmentVault.tradeOnCore(USDT_TOKEN_INDEX, false, 1e6, 5000e8);
       vm.stopPrank();
     }
 
     // Move to the next block,
     // Performing all queued CoreWriter and bridging actions
     CoreSimulatorLib.nextBlock();
+
+    // Validate that the fulfillmentVault has 0 usdt on core
+    {
+      PrecompileLib.SpotBalance memory spotBalance = PrecompileLib.spotBalance(address(fulfillmentVault), USDT_TOKEN_INDEX);
+      assertEq(spotBalance.total, 0, "FulfillmentVault should have 0 usdt on core");
+    }
 
     // Validate that the fulfillmentVault has usdc on core
     {
@@ -809,7 +841,7 @@ contract FulfillmentVaultTest is BaseTest {
     // Keeper trades usdc to hype on core (buys hype with usdc)
     {
       vm.startPrank(keeper);
-      fulfillmentVault.tradeOnCore(HYPE_TOKEN_INDEX, true, 50e6, 100e2);
+      fulfillmentVault.tradeOnCore(HYPE_TOKEN_INDEX, true, 50e12, 100e8);
       vm.stopPrank();
     }
 
@@ -817,9 +849,16 @@ contract FulfillmentVaultTest is BaseTest {
     // Performing all queued CoreWriter and bridging actions
     CoreSimulatorLib.nextBlock();
 
+    // Validate that the fulfillmentVault has 0 usdc on core
+    {
+      PrecompileLib.SpotBalance memory spotBalance = PrecompileLib.spotBalance(address(fulfillmentVault), USDC_TOKEN_INDEX);
+      assertEq(spotBalance.total, 0, "FulfillmentVault should have 0 usdc on core");
+    }
+
     // Validate that the fulfillmentVault has hype on core
     {
       PrecompileLib.SpotBalance memory spotBalance = PrecompileLib.spotBalance(address(fulfillmentVault), HYPE_TOKEN_INDEX);
+      console.log("Hype spotBalance on core", spotBalance.total);
       assertEq(spotBalance.total, 100e8, "FulfillmentVault should have 100 hype on core");
     }
 
@@ -833,12 +872,22 @@ contract FulfillmentVaultTest is BaseTest {
     // Move to the next block,
     // Performing all queued CoreWriter and bridging actions
     CoreSimulatorLib.nextBlock();
+
+    // Validate that the fulfillmentVault has 100 hype on evm
+    {
+      assertEq(address(fulfillmentVault).balance, 100e18, "FulfillmentVault should have 100 hype on evm");
+    }
     
     // Keeper wraps the hype into whype
     {
       vm.startPrank(keeper);
       fulfillmentVault.wrapHype();
       vm.stopPrank();
+    }
+
+    // Validate that the fulfillmentVault has 100 whype on evm
+    {
+      assertEq(whype.balanceOf(address(fulfillmentVault)), 100e18, "FulfillmentVault should have 100 whype on evm");
     }
 
     // Keeper approves fulfillment vault's whype to the origination pool

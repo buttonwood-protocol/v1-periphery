@@ -91,7 +91,7 @@ interface IFulfillmentVault is ILiquidityVault, IFulfillmentVaultEvents {
    * @param limitPx The limit price. Note, This is is (weiUnits - szUnits). For USDT and USDH, weiUnits is 1e6.
    * @param sz The size of the trade. Note, this is in szUnits. For USDT and USDH, szUnits is 1e2.
    */
-  function tradeOnCore(uint32 asset, bool isBuy, uint32 limitPx, uint64 sz) external;
+  function tradeOnCore(uint32 asset, bool isBuy, uint64 limitPx, uint64 sz) external;
 
   /**
    * @notice Fills an order from the order pool

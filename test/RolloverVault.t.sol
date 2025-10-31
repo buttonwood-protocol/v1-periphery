@@ -105,6 +105,7 @@ contract RolloverVaultTest is BaseTest {
     vm.etch(HYPER_CORE_ADDRESS, address(hyperCore).code);
     vm.label(HYPER_CORE_ADDRESS, "HyperCore");
     hyperCore = CoreSimulatorLib.init();
+    hyperCore.setUseRealL1Read(false);
   }
 
   function setupTokenRegistry() internal {
@@ -189,9 +190,11 @@ contract RolloverVaultTest is BaseTest {
     vm.stopPrank();
 
     // Force the rolloverVault to be activated on hypercore
+    vm.mockCall(HLConstants.CORE_USER_EXISTS_PRECOMPILE_ADDRESS, abi.encode(address(rolloverVault)), abi.encode(true));
     CoreSimulatorLib.forceAccountActivation(address(rolloverVault));
     
     // Force activate the HYPE system address so bridging works
+    vm.mockCall(HLConstants.CORE_USER_EXISTS_PRECOMPILE_ADDRESS, abi.encode(HLConstants.HYPE_SYSTEM_ADDRESS), abi.encode(true));
     CoreSimulatorLib.forceAccountActivation(0x2222222222222222222222222222222222222222);
   }
 

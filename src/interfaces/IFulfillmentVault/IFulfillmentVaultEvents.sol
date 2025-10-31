@@ -61,7 +61,7 @@ interface IFulfillmentVaultEvents {
    * @param sz The size of the trade.
    * @param cloid The cloid of the trade, generated from the nonce.
    */
-  event TradeOnCore(uint32 indexed assetId, bool isBuy, uint32 limitPx, uint64 sz, uint128 indexed cloid);
+  event TradeOnCore(uint32 indexed assetId, bool isBuy, uint64 limitPx, uint64 sz, uint128 indexed cloid);
 
   /**
    * @notice Emitted when an order is filled.

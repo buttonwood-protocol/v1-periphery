@@ -195,7 +195,7 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
   }
 
   /// @inheritdoc IFulfillmentVault
-  function tradeOnCore(uint32 index, bool isBuy, uint32 limitPx, uint64 sz) external override onlyRole(KEEPER_ROLE) whenPaused {
+  function tradeOnCore(uint32 index, bool isBuy, uint64 limitPx, uint64 sz) external override onlyRole(KEEPER_ROLE) whenPaused {
     // Get storage
     FulfillmentVaultStorage storage $ = _getFulfillmentVaultStorage();
     // Emit event

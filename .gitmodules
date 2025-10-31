@@ -12,4 +12,4 @@
 	url = https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable
 [submodule "lib/hyper-evm-lib"]
 	path = lib/hyper-evm-lib
-	url = https://github.com/hyperliquid-dev/hyper-evm-lib
+	url = https://github.com/SocksNFlops/hyper-evm-lib
