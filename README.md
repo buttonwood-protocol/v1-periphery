@@ -1,10 +1,12 @@
-## Foundry
+## V1-Periphery
 
 **Periphery contracts for the Buttonwood-V1 Protocol**
 
 Periphery consists of:
 
--   **Router**: A router that auto-wraps USD stablecoins into USDX/Consol before interacting with Core Contracts
+- **Router**: A router that auto-wraps USD stablecoins into USDX/Consol before interacting with Core Contracts
+- **RolloverVault**: A vault that auto-deposits USDX into the next available OriginationPool
+- **FulfillmentVault**: A vault used by the fulfiller for increasing liquidity to fill orders
 
 ## Documentation
 
