@@ -132,7 +132,7 @@ contract RolloverVault is LiquidityVault, IRolloverVault {
       uint256 ogPoolConsolBalance = IERC20(consol()).balanceOf(address(ogPool));
       uint256 ogPoolBalance = ogPool.balanceOf(address(this));
       total += Math.mulDiv(ogPoolBalance, ogPoolUsdxBalance, ogPoolTotalSupply)
-        + Math.mulDiv(ogPoolBalance, ogPoolConsolBalance, ogPoolTotalSupply);
+      + Math.mulDiv(ogPoolBalance, ogPoolConsolBalance, ogPoolTotalSupply);
     }
     // Add the USDX and Consol balances that are currently in the rollover vault
     total += IERC20(usdx()).balanceOf(address(this)) + IERC20(consol()).balanceOf(address(this));
