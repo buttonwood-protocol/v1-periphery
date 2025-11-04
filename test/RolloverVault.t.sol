@@ -17,37 +17,16 @@ import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol"
 import {IERC1822Proxiable} from "@openzeppelin/contracts/interfaces/draft-IERC1822.sol";
 import {ILiquidityVault} from "../src/interfaces/ILiquidityVault/ILiquidityVault.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
-import {CoreSimulatorLib} from "@hyper-evm-lib/test/simulation/CoreSimulatorLib.sol";
-import {PrecompileLib} from "@hyper-evm-lib/src/PrecompileLib.sol";
-import {HyperCore} from "@hyper-evm-lib/test/simulation/HyperCore.sol";
-import {TokenRegistry} from "@hyper-evm-lib/src/registry/TokenRegistry.sol";
-import {HLConstants} from "@hyper-evm-lib/src/common/HLConstants.sol";
 import {IOriginationPoolScheduler} from "@core/interfaces/IOriginationPoolScheduler/IOriginationPoolScheduler.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 contract RolloverVaultTest is BaseTest {
   using Math for uint256;
 
-  HyperCore public hyperCore;
-
-  using PrecompileLib for address;
-
   string NAME = "Test Rollover Vault";
   string SYMBOL = "tRV";
   uint8 DECIMALS = 26; // ToDo: Make this 8 + usdx decimals????
   uint8 DECIMALS_OFFSET = 8;
-
-  // Hyper-EVM-Lib Values
-  TokenRegistry public tokenRegistry;
-  address public HYPER_CORE_ADDRESS = 0x9999999999999999999999999999999999999999;
-  address TOKEN_INFO_PRECOMPILE_ADDRESS = 0x000000000000000000000000000000000000080C;
-  address SPOT_INFO_PRECOMPILE_ADDRESS = 0x000000000000000000000000000000000000080b;
-  address SPOT_PX_PRECOMPILE_ADDRESS = 0x0000000000000000000000000000000000000808;
-  address public TOKEN_REGISTRY_ADDRESS = 0x0b51d1A9098cf8a72C325003F44C194D41d7A85B;
-  uint32 public HYPE_TOKEN_INDEX = uint32(HLConstants.hypeTokenIndex());
-  uint32 public USDC_TOKEN_INDEX = 0;
-  uint32 public USDT_TOKEN_INDEX = 268;
-  uint32 public USDH_TOKEN_INDEX = 360;
 
   RolloverVault public rolloverVault;
 
@@ -106,20 +85,9 @@ contract RolloverVaultTest is BaseTest {
     vm.startPrank(admin);
     rolloverVault.grantRole(rolloverVault.KEEPER_ROLE(), keeper);
     vm.stopPrank();
-
-    // Force the rolloverVault to be activated on hypercore
-    vm.mockCall(HLConstants.CORE_USER_EXISTS_PRECOMPILE_ADDRESS, abi.encode(address(rolloverVault)), abi.encode(true));
-    CoreSimulatorLib.forceAccountActivation(address(rolloverVault));
-
-    // Force activate the HYPE system address so bridging works
-    vm.mockCall(
-      HLConstants.CORE_USER_EXISTS_PRECOMPILE_ADDRESS, abi.encode(HLConstants.HYPE_SYSTEM_ADDRESS), abi.encode(true)
-    );
-    CoreSimulatorLib.forceAccountActivation(0x2222222222222222222222222222222222222222);
   }
 
   function test_initialize() public {
-    CoreSimulatorLib.forceSpotBalance(address(rolloverVault), USDT_TOKEN_INDEX, 0);
     assertEq(rolloverVault.name(), NAME);
     assertEq(rolloverVault.symbol(), SYMBOL);
     assertEq(rolloverVault.decimals(), DECIMALS);

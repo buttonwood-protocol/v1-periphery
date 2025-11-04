@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  FOUNDRY_PROFILE: ci
+
+jobs:
+  check:
+    strategy:
+      fail-fast: true
+
+    name: Solhint - V1-Periphery
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.V1_PERIPHERY_CI_TOKEN }}
+          submodules: recursive
+      - uses: beeb/lintspec@v0.4.1
+        with:
+          paths: "[]"
+          fail-on-problem: "false"
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Run Solhint
+        run: |
+          pnpm solhint
+        id: solhint

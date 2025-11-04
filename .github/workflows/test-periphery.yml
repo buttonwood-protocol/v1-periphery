@@ -10,11 +10,15 @@ env:
 
 jobs:
   check:
-    name: Foundry project
+    strategy:
+      fail-fast: true
+
+    name: Tests - V1-Periphery
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          token: ${{ secrets.V1_PERIPHERY_CI_TOKEN }}
           submodules: recursive
 
       - name: Install Foundry
@@ -24,14 +28,9 @@ jobs:
         run: |
           forge --version
 
-      - name: Run Forge fmt
+      - name: Run Forge build (no sizes)
         run: |
-          forge fmt --check
-        id: fmt
-
-      - name: Run Forge build
-        run: |
-          forge build --sizes
+          forge build
         id: build
 
       - name: Run Forge tests

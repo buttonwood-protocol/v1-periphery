@@ -14,8 +14,8 @@ additional_compiler_profiles = [
 ]
 
 compilation_restrictions = [
-    { paths = "../contracts/src/LoanManager.sol", optimizer_runs = 500 },
-    { paths = "../contracts/src/GeneralManager.sol", optimizer_runs = 500 },
+    { paths = "./lib/cash/src/LoanManager.sol", optimizer_runs = 500 },
+    { paths = "./lib/cash/src/GeneralManager.sol", optimizer_runs = 500 },
 ]
 
 fs_permissions = [

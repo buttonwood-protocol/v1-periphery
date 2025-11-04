@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  FOUNDRY_PROFILE: ci
+
+jobs:
+  check:
+    strategy:
+      fail-fast: true
+
+    name: Lintspec - V1-Periphery
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.V1_PERIPHERY_CI_TOKEN }}
+          submodules: recursive
+      - uses: beeb/lintspec@v0.4.1
+        with:
+          paths: "[]"
+          fail-on-problem: "false"
+
+      - name: Run Lintspec
+        run: |
+          lintspec src
+        id: lintspec
