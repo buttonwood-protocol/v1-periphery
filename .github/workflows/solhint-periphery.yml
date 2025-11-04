@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.CASH_MONOREPO_CI_TOKEN }}
+          token: ${{ secrets.V1_PERIPHERY_CI_TOKEN }}
           submodules: recursive
       - uses: beeb/lintspec@v0.4.1
         with:
