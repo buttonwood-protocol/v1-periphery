@@ -2,11 +2,7 @@ name: CI
 
 on:
   push:
-    paths:
-      - packages/periphery-contracts/**
   pull_request:
-    paths:
-      - packages/periphery-contracts/**
   workflow_dispatch:
 
 env:
@@ -17,7 +13,7 @@ jobs:
     strategy:
       fail-fast: true
 
-    name: Fmt - packages/periphery-contracts
+    name: Fmt - V1-Periphery
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,18 +25,15 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1
 
       - name: Show Forge version
-        working-directory: packages/periphery-contracts
         run: |
           forge --version
 
       - name: Run Forge fmt
-        working-directory: packages/periphery-contracts
         run: |
           forge fmt --check
         id: fmt
 
       - name: Run Forge build
-        working-directory: packages/periphery-contracts
         run: |
           forge build --sizes
         id: build

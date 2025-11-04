@@ -2,11 +2,7 @@ name: CI
 
 on:
   push:
-    paths:
-      - packages/periphery-contracts/**
   pull_request:
-    paths:
-      - packages/periphery-contracts/**
   workflow_dispatch:
 
 env:
@@ -17,7 +13,7 @@ jobs:
     strategy:
       fail-fast: true
 
-    name: Lintspec - packages/periphery-contracts
+    name: Lintspec - V1-Periphery
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,7 +26,6 @@ jobs:
           fail-on-problem: "false"
 
       - name: Run Lintspec
-        working-directory: packages/periphery-contracts
         run: |
           lintspec src
         id: lintspec
