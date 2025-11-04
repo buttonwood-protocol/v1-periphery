@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    paths:
+      - packages/periphery-contracts/**
+  pull_request:
+    paths:
+      - packages/periphery-contracts/**
+  workflow_dispatch:
+
+env:
+  FOUNDRY_PROFILE: ci
+
+jobs:
+  check:
+    strategy:
+      fail-fast: true
+
+    name: Fmt - packages/periphery-contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.CASH_MONOREPO_CI_TOKEN }}
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Show Forge version
+        working-directory: packages/periphery-contracts
+        run: |
+          forge --version
+
+      - name: Run Forge fmt
+        working-directory: packages/periphery-contracts
+        run: |
+          forge fmt --check
+        id: fmt
+
+      - name: Run Forge build
+        working-directory: packages/periphery-contracts
+        run: |
+          forge build --sizes
+        id: build

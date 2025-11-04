@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    paths:
+      - packages/periphery-contracts/**
+  pull_request:
+    paths:
+      - packages/periphery-contracts/**
+  workflow_dispatch:
+
+env:
+  FOUNDRY_PROFILE: ci
+
+jobs:
+  check:
+    strategy:
+      fail-fast: true
+
+    name: Lintspec - packages/periphery-contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.CASH_MONOREPO_CI_TOKEN }}
+          submodules: recursive
+      - uses: beeb/lintspec@v0.4.1
+        with:
+          paths: "[]"
+          fail-on-problem: "false"
+
+      - name: Run Lintspec
+        working-directory: packages/periphery-contracts
+        run: |
+          lintspec src
+        id: lintspec
