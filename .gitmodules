@@ -13,3 +13,4 @@
 [submodule "lib/hyper-evm-lib"]
 	path = lib/hyper-evm-lib
 	url = https://github.com/SocksNFlops/hyper-evm-lib
+  branch = adding-local-testing-mode

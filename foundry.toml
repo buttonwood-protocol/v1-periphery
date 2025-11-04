@@ -3,8 +3,8 @@ src = "src"
 out = "out"
 libs = ["lib"]
 optimizer-runs = 10_000
-fork_url = "hyperliquid"
-fork_block_number = 17133085
+# fork_url = "hyperliquid"
+# fork_block_number = 17133085
 rpc_storage_caching = { chains = "all", endpoints = "all" }
 no_storage_caching = false
 
@@ -48,3 +48,5 @@ tab_width = 2
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
 
+[lint]
+exclude_lints = ['mixed-case-variable', 'screaming-snake-case-immutable']

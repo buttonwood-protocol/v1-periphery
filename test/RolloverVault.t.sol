@@ -1,16 +1,12 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
+/// forge-lint: disable-next-line(unused-import)
 import {BaseTest, console} from "./BaseTest.t.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {USDX} from "@core/USDX.sol";
-import {IUSDX} from "@core/interfaces/IUSDX/IUSDX.sol";
-import {ILiquidityVaultEvents} from "../src/interfaces/ILiquidityVault/ILiquidityVaultEvents.sol";
 import {IRolloverVault, IRolloverVaultEvents, IRolloverVaultErrors} from "../src/interfaces/IRolloverVault/IRolloverVault.sol";
 import {RolloverVault} from "../src/RolloverVault.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {Roles} from "@core/libraries/Roles.sol";
-import {IWNT} from "../src/interfaces/IWNT.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IERC165} from "@openzeppelin/contracts/interfaces/IERC165.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
@@ -21,11 +17,7 @@ import {CoreSimulatorLib} from "@hyper-evm-lib/test/simulation/CoreSimulatorLib.
 import {PrecompileLib} from "@hyper-evm-lib/src/PrecompileLib.sol";
 import {HyperCore} from "@hyper-evm-lib/test/simulation/HyperCore.sol";
 import {TokenRegistry} from "@hyper-evm-lib/src/registry/TokenRegistry.sol";
-import {HLConversions} from "@hyper-evm-lib/src/common/HLConversions.sol";
 import {HLConstants} from "@hyper-evm-lib/src/common/HLConstants.sol";
-import {Router} from "../src/Router.sol";
-import {MockPriceOracle} from "./mocks/MockPriceOracle.sol";
-import {CreationRequest, BaseRequest} from "@core/types/orders/OrderRequests.sol";
 import {IOriginationPoolScheduler} from "@core/interfaces/IOriginationPoolScheduler/IOriginationPoolScheduler.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
@@ -59,75 +51,6 @@ contract RolloverVaultTest is BaseTest {
 
   uint256 public PRIME_AMOUNT = 1e18; // The initial amount of depositableAsset to prime the liquidityVault with (in depositableAsset decimals)
 
-  function mockTokenInfo(
-    uint32 tokenIndex,
-    address evmContract,
-    string memory name,
-    uint8 szDecimals,
-    uint8 weiDecimals,
-    int8 evmExtraWeiDecimals
-  ) internal {
-    PrecompileLib.TokenInfo memory info = PrecompileLib.TokenInfo({
-      name: name,
-      spots: new uint64[](0),
-      deployerTradingFeeShare: 0,
-      deployer: address(0),
-      evmContract: evmContract,
-      szDecimals: szDecimals,
-      weiDecimals: weiDecimals,
-      evmExtraWeiDecimals: evmExtraWeiDecimals
-    });
-
-    vm.mockCall(TOKEN_INFO_PRECOMPILE_ADDRESS, abi.encode(tokenIndex), abi.encode(info));
-    if (tokenIndex != HYPE_TOKEN_INDEX && tokenIndex != USDC_TOKEN_INDEX) {
-      tokenRegistry.setTokenInfo(tokenIndex);
-    }
-  }
-
-  function mockSpotInfo(
-    uint32 spotIndex,
-    string memory name,
-    uint64[2] memory tokens
-  ) internal {
-    PrecompileLib.SpotInfo memory info = PrecompileLib.SpotInfo({
-      name: name,
-      tokens: tokens
-    });
-    vm.mockCall(SPOT_INFO_PRECOMPILE_ADDRESS, abi.encode(spotIndex), abi.encode(info));
-  }
-
-  function mockSpotPx(uint32 spotIndex, uint64 px) internal {
-    vm.mockCall(SPOT_PX_PRECOMPILE_ADDRESS, abi.encode(spotIndex), abi.encode(px));
-  }
-
-  function setupHyperCore() internal {
-    hyperCore = new HyperCore();
-    vm.etch(HYPER_CORE_ADDRESS, address(hyperCore).code);
-    vm.label(HYPER_CORE_ADDRESS, "HyperCore");
-    hyperCore = CoreSimulatorLib.init();
-    hyperCore.setUseRealL1Read(false);
-  }
-
-  function setupTokenRegistry() internal {
-    tokenRegistry = new TokenRegistry();
-    vm.etch(TOKEN_REGISTRY_ADDRESS, address(tokenRegistry).code);
-    vm.label(TOKEN_REGISTRY_ADDRESS, "TokenRegistry");
-    tokenRegistry = TokenRegistry(TOKEN_REGISTRY_ADDRESS);
-    mockTokenInfo(USDT_TOKEN_INDEX, address(usdt), "USDT", 2, 8, -2);
-    mockTokenInfo(USDH_TOKEN_INDEX, address(usdh), "USDH", 2, 8, -2);
-    mockTokenInfo(HYPE_TOKEN_INDEX, address(0), "HYPE", 2, 8, 0);
-    mockTokenInfo(USDC_TOKEN_INDEX, address(0), "USDC", 8, 8, 0);
-  }
-
-  function setupSpotInfo() internal {
-    uint64[2] memory tokens = [uint64(USDT_TOKEN_INDEX), uint64(USDC_TOKEN_INDEX)];
-    mockSpotInfo(USDT_TOKEN_INDEX, "@166", tokens);
-    tokens = [uint64(USDH_TOKEN_INDEX), uint64(USDC_TOKEN_INDEX)];
-    mockSpotInfo(USDH_TOKEN_INDEX, "@230", tokens);
-    tokens = [uint64(HYPE_TOKEN_INDEX), uint64(USDC_TOKEN_INDEX)];
-    mockSpotInfo(HYPE_TOKEN_INDEX, "@107", tokens);
-  }
-
   function primeRolloverVault() public {
     // Mint 0.5 PRIME_AMOUNT of usdt0 and usdh to the admin
     vm.startPrank(admin);
@@ -154,18 +77,8 @@ contract RolloverVaultTest is BaseTest {
   }
 
   function setUp() public {
-    // Initialize the HyperCore simulator
-    // vm.createSelectFork(vm.rpcUrl("hyperliquid"), 17133085);
-    setupHyperCore();
-
     // Setup core
     setUpCore();
-
-    // Setup the mock token registry
-    setupTokenRegistry();
-
-    // Setup the mock spot info
-    setupSpotInfo();
 
     // Deploy the rolloverVault
     RolloverVault rolloverVaultImplementation = new RolloverVault();

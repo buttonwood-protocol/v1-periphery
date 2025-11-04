@@ -5,8 +5,7 @@ import {IFulfillmentVault} from "./interfaces/IFulfillmentVault/IFulfillmentVaul
 import {IERC165, LiquidityVault} from "./LiquidityVault.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {CoreWriterLib, HLConstants, HLConversions} from "@hyper-evm-lib/src/CoreWriterLib.sol";
-import {PrecompileLib} from "@hyper-evm-lib/src/PrecompileLib.sol";
+import {CoreWriterLib, HLConversions} from "@hyper-evm-lib/src/CoreWriterLib.sol";
 import {IWNT} from "./interfaces/IWNT.sol";
 import {IFulfillmentVault} from "./interfaces/IFulfillmentVault/IFulfillmentVault.sol";
 import {IUSDX} from "@core/interfaces/IUSDX/IUSDX.sol";

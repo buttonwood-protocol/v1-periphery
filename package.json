@@ -1,5 +1,5 @@
 {
-  "name": "@repo/periphery-contracts",
+  "name": "@repo/v1-periphery",
   "version": "0.0.0",
   "private": true,
   "scripts": {

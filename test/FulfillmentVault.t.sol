@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
+/// forge-lint: disable-next-line(unused-import)
 import {BaseTest, console} from "./BaseTest.t.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {USDX} from "@core/USDX.sol";
 import {IUSDX} from "@core/interfaces/IUSDX/IUSDX.sol";
 import {IFulfillmentVault, IFulfillmentVaultEvents} from "../src/interfaces/IFulfillmentVault/IFulfillmentVault.sol";
 import {FulfillmentVault} from "../src/FulfillmentVault.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {Roles} from "@core/libraries/Roles.sol";
-import {IWNT} from "../src/interfaces/IWNT.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IERC165} from "@openzeppelin/contracts/interfaces/IERC165.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";

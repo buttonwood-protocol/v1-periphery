@@ -26,4 +26,4 @@ echo "Wrapped native token address: $WRAPPED_NATIVE_TOKEN_ADDRESS"
 
 # Deploy the contracts using forge
 echo "Deploying contracts"
-forge script script/DeployRouter.s.sol --rpc-url http://localhost:8545 --broadcast --slow
+forge script script/DeployAll.s.sol --rpc-url http://localhost:8545 --broadcast --slow

@@ -1,3 +1,11 @@
+# Dependencies
+node_modules
+.pnp
+.pnp.js
+
+# Turbo
+.turbo
+
 # Compiler files
 cache/
 out/

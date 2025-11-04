@@ -1,3 +1,5 @@
 {
-  "routerAddress": "0x3B6fa340Cc58E29295d9942acD7a5037b9Ec20F4"
+  "fulfillmentVaultAddress": "0x4Bf6c1Cc1FC377eC36A0b51A851229A86Be3BaC7",
+  "rolloverVaultAddress": "0xAcB6FDA5106fdac6a54DDa52233f7683b759567f",
+  "routerAddress": "0x70e76bF2b92B32EE1f479A205fF2e07cBC8D09C6"
 }
