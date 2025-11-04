@@ -28,9 +28,9 @@ jobs:
         run: |
           forge --version
 
-      - name: Run Forge build
+      - name: Run Forge build (no sizes)
         run: |
-          forge build --sizes
+          forge build
         id: build
 
       - name: Run Forge tests
