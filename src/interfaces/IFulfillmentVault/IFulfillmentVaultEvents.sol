@@ -7,7 +7,6 @@ pragma solidity ^0.8.20;
  * @notice Interface for events emitted by FulfillmentVaults.
  */
 interface IFulfillmentVaultEvents {
-  
   /**
    * @notice Emitted when an asset is approved to the order pool.
    * @param asset The address of the asset that was approved.

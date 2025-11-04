@@ -402,11 +402,19 @@ contract LiquidityVaultTest is Test {
 
     if (isRedeemable) {
       assertEq(liquidityVault.redeemableAssets().length, 2, "Redeemable assets should have length 2");
-      assertEq(liquidityVault.redeemableAssets()[0], address(redeemableAsset), "redeemableAssets[0] should be the redeemable asset");
+      assertEq(
+        liquidityVault.redeemableAssets()[0],
+        address(redeemableAsset),
+        "redeemableAssets[0] should be the redeemable asset"
+      );
       assertEq(liquidityVault.redeemableAssets()[1], asset, "redeemableAssets[1] should be the asset passed in");
     } else {
       assertEq(liquidityVault.depositableAssets().length, 2, "Depositable assets should have length 2");
-      assertEq(liquidityVault.depositableAssets()[0], address(depositableAsset), "depositableAssets[0] should be the depositable asset");
+      assertEq(
+        liquidityVault.depositableAssets()[0],
+        address(depositableAsset),
+        "depositableAssets[0] should be the depositable asset"
+      );
       assertEq(liquidityVault.depositableAssets()[1], asset, "depositableAssets[1] should be the asset passed in");
     }
   }

@@ -109,7 +109,7 @@ contract Router is
   }
 
   /**
-   * @notice Internal function to pull in USDX via the underlying usdToken
+   * @dev Internal function to pull in USDX via the underlying usdToken
    * @param usdToken The address of the usdToken to pull in
    * @param usdxAmount The amount of USDX to pull in
    */
@@ -132,7 +132,7 @@ contract Router is
   }
 
   /**
-   * @notice Internal function to pull in Consol via the underlying usdTokens, USDX, SubConsols, or ForfeitedAssetsPool
+   * @dev Internal function to pull in Consol via the underlying usdTokens, USDX, SubConsols, or ForfeitedAssetsPool
    * @param inputToken The address of the input token to pull in
    * @param consolAmount The amount of Consol to pull in
    */
@@ -153,7 +153,7 @@ contract Router is
   }
 
   /**
-   * @notice Internal function to pull in collateral
+   * @dev Internal function to pull in collateral
    * @param collateral The address of the collateral token to pull in
    * @param collateralCollected The amount of collateral to pull in
    * @param isNative Whether the collateral is the native token or not (i.e., whype: 0x555...)
@@ -169,7 +169,7 @@ contract Router is
   }
 
   /**
-   * @notice Internal function to calculate the cost of a borrowing the collateral amount (including the price spread)
+   * @dev Internal function to calculate the cost of a borrowing the collateral amount (including the price spread)
    * @param collateral The address of the collateral token
    * @param collateralAmount The amount of collateral to calculate the cost for
    * @return cost The cost of the collateral amount (including the price spread)
@@ -347,7 +347,7 @@ contract Router is
   }
 
   /**
-   * @notice Internal function to get or create the latest origination pool for a given OPoolConfigId
+   * @dev Internal function to get or create the latest origination pool for a given OPoolConfigId
    * @param oPoolConfigId The OPoolConfigId of the origination pool config
    * @return originationPool The origination pool
    */

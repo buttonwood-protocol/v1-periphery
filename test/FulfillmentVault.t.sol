@@ -25,7 +25,6 @@ import {Router} from "../src/Router.sol";
 import {MockPriceOracle} from "./mocks/MockPriceOracle.sol";
 import {CreationRequest, BaseRequest} from "@core/types/orders/OrderRequests.sol";
 
-
 contract FulfillmentVaultTest is BaseTest {
   HyperCore public hyperCore;
 
@@ -82,15 +81,8 @@ contract FulfillmentVaultTest is BaseTest {
     }
   }
 
-  function mockSpotInfo(
-    uint32 spotIndex,
-    string memory name,
-    uint64[2] memory tokens
-  ) internal {
-    PrecompileLib.SpotInfo memory info = PrecompileLib.SpotInfo({
-      name: name,
-      tokens: tokens
-    });
+  function mockSpotInfo(uint32 spotIndex, string memory name, uint64[2] memory tokens) internal {
+    PrecompileLib.SpotInfo memory info = PrecompileLib.SpotInfo({name: name, tokens: tokens});
     vm.mockCall(SPOT_INFO_PRECOMPILE_ADDRESS, abi.encode(spotIndex), abi.encode(info));
   }
 
@@ -192,11 +184,15 @@ contract FulfillmentVaultTest is BaseTest {
     vm.stopPrank();
 
     // Force the fulfillmentVault to be activated on hypercore
-    vm.mockCall(HLConstants.CORE_USER_EXISTS_PRECOMPILE_ADDRESS, abi.encode(address(fulfillmentVault)), abi.encode(true));
+    vm.mockCall(
+      HLConstants.CORE_USER_EXISTS_PRECOMPILE_ADDRESS, abi.encode(address(fulfillmentVault)), abi.encode(true)
+    );
     CoreSimulatorLib.forceAccountActivation(address(fulfillmentVault));
-    
+
     // Force activate the HYPE system address so bridging works
-    vm.mockCall(HLConstants.CORE_USER_EXISTS_PRECOMPILE_ADDRESS, abi.encode(HLConstants.HYPE_SYSTEM_ADDRESS), abi.encode(true));
+    vm.mockCall(
+      HLConstants.CORE_USER_EXISTS_PRECOMPILE_ADDRESS, abi.encode(HLConstants.HYPE_SYSTEM_ADDRESS), abi.encode(true)
+    );
     CoreSimulatorLib.forceAccountActivation(HLConstants.HYPE_SYSTEM_ADDRESS);
 
     // Force activate the UBTC system address so bridging works
@@ -290,7 +286,11 @@ contract FulfillmentVaultTest is BaseTest {
 
     // Validate that the fulfillmentVault has no hype balance and has the entire hype balance in whype now
     assertEq(address(fulfillmentVault).balance, 0, "FulfillmentVault should have no hype balance");
-    assertEq(whype.balanceOf(address(fulfillmentVault)), hypeBalance, "FulfillmentVault should have the previous hype balance in whype");
+    assertEq(
+      whype.balanceOf(address(fulfillmentVault)),
+      hypeBalance,
+      "FulfillmentVault should have the previous hype balance in whype"
+    );
   }
 
   function test_unwrapWhype(address caller, uint256 whypeBalance) public {
@@ -312,16 +312,26 @@ contract FulfillmentVaultTest is BaseTest {
 
     // Validate that the fulfillmentVault has no whype balance and has the entire whype balance in hype now
     assertEq(whype.balanceOf(address(fulfillmentVault)), 0, "FulfillmentVault should have no whype balance");
-    assertEq(address(fulfillmentVault).balance, whypeBalance, "FulfillmentVault should have the previous whype balance in hype");
+    assertEq(
+      address(fulfillmentVault).balance, whypeBalance, "FulfillmentVault should have the previous whype balance in hype"
+    );
   }
 
-  function test_bridgeAssetFromCoreToEvm_revertsWhenDoesNotHaveKeeperRole(address caller, uint64 assetIndex, uint256 bridgeAmount) public {
+  function test_bridgeAssetFromCoreToEvm_revertsWhenDoesNotHaveKeeperRole(
+    address caller,
+    uint64 assetIndex,
+    uint256 bridgeAmount
+  ) public {
     // Ensure the caller does not have the KEEPER_ROLE
     vm.assume(fulfillmentVault.hasRole(fulfillmentVault.KEEPER_ROLE(), caller) == false);
 
     // Attempt to call bridgeAssetFromCoreToEvm() without the KEEPER_ROLE
     vm.startPrank(caller);
-    vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, caller, fulfillmentVault.KEEPER_ROLE()));
+    vm.expectRevert(
+      abi.encodeWithSelector(
+        IAccessControl.AccessControlUnauthorizedAccount.selector, caller, fulfillmentVault.KEEPER_ROLE()
+      )
+    );
     fulfillmentVault.bridgeAssetFromCoreToEvm(assetIndex, bridgeAmount);
     vm.stopPrank();
   }
@@ -366,7 +376,12 @@ contract FulfillmentVaultTest is BaseTest {
     CoreSimulatorLib.nextBlock();
 
     // Validate that the fulfillmentVault has the bridgeAmount of hype on evm (rounded to within 1e10 precision)
-    assertApproxEqAbs(address(fulfillmentVault).balance, bridgeAmount, 1e10, "FulfillmentVault should have the bridgeAmount of hype on evm");
+    assertApproxEqAbs(
+      address(fulfillmentVault).balance,
+      bridgeAmount,
+      1e10,
+      "FulfillmentVault should have the bridgeAmount of hype on evm"
+    );
   }
 
   function test_bridgeHypeFromCoreToEvm_ubtc(uint256 ubtcBalance, uint256 bridgeAmount) public {
@@ -398,7 +413,11 @@ contract FulfillmentVaultTest is BaseTest {
     CoreSimulatorLib.nextBlock();
 
     // Validate that the fulfillmentVault has the bridgeAmount of ubtc on evm (rounded to within 100 precision [rounded down when transferred to evm])
-    assertEq(ubtc.balanceOf(address(fulfillmentVault)), bridgeAmount, "FulfillmentVault should have the bridgeAmount of ubtc on evm");
+    assertEq(
+      ubtc.balanceOf(address(fulfillmentVault)),
+      bridgeAmount,
+      "FulfillmentVault should have the bridgeAmount of ubtc on evm"
+    );
   }
 
   function test_burnUsdx_revertsWhenDoesNotHaveKeeperRole(address caller, uint256 amount) public {
@@ -464,13 +483,21 @@ contract FulfillmentVaultTest is BaseTest {
     assertGt(usdt.balanceOf(address(fulfillmentVault)), 0, "FulfillmentVault should be holding usdt");
   }
 
-  function test_withdrawUsdTokenFromUsdx_revertsWhenDoesNotHaveKeeperRole(address caller, address usdToken, uint256 amount) public {
+  function test_withdrawUsdTokenFromUsdx_revertsWhenDoesNotHaveKeeperRole(
+    address caller,
+    address usdToken,
+    uint256 amount
+  ) public {
     // Ensure the caller does not have the KEEPER_ROLE
     vm.assume(fulfillmentVault.hasRole(fulfillmentVault.KEEPER_ROLE(), caller) == false);
 
     // Attempt to call withdrawUsdTokenFromUsdx() without the KEEPER_ROLE
     vm.startPrank(caller);
-    vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, caller, fulfillmentVault.KEEPER_ROLE()));
+    vm.expectRevert(
+      abi.encodeWithSelector(
+        IAccessControl.AccessControlUnauthorizedAccount.selector, caller, fulfillmentVault.KEEPER_ROLE()
+      )
+    );
     fulfillmentVault.withdrawUsdTokenFromUsdx(usdToken, amount);
     vm.stopPrank();
   }
@@ -520,12 +547,18 @@ contract FulfillmentVaultTest is BaseTest {
     assertEq(fulfillmentVault.balanceOf(user), fBalance, "User should have the same balance in the fulfillmentVault");
 
     // Validate that the fulfillmentVault is now holding usdt (can compare exact amount since we're withdrawing, not burning)
-    assertEq(usdt.balanceOf(address(fulfillmentVault)), withdrawAmount, "FulfillmentVault should be holding the withdrawn usdt amount");
+    assertEq(
+      usdt.balanceOf(address(fulfillmentVault)),
+      withdrawAmount,
+      "FulfillmentVault should be holding the withdrawn usdt amount"
+    );
   }
 
-  function test_bridgeAssetFromEvmToCore_revertsWhenDoesNotHaveKeeperRole(address caller, address usdToken, uint256 amount)
-    public
-  {
+  function test_bridgeAssetFromEvmToCore_revertsWhenDoesNotHaveKeeperRole(
+    address caller,
+    address usdToken,
+    uint256 amount
+  ) public {
     // Ensure the caller does not have the KEEPER_ROLE
     vm.assume(fulfillmentVault.hasRole(fulfillmentVault.KEEPER_ROLE(), caller) == false);
 
@@ -602,13 +635,23 @@ contract FulfillmentVaultTest is BaseTest {
     );
   }
 
-  function test_tradeOnCore_revertsWhenDoesNotHaveKeeperRole(address caller, uint32 asset, bool isBuy, uint32 limitPx, uint64 sz) public {
+  function test_tradeOnCore_revertsWhenDoesNotHaveKeeperRole(
+    address caller,
+    uint32 asset,
+    bool isBuy,
+    uint32 limitPx,
+    uint64 sz
+  ) public {
     // Ensure the caller does not have the KEEPER_ROLE
     vm.assume(fulfillmentVault.hasRole(fulfillmentVault.KEEPER_ROLE(), caller) == false);
 
     // Attempt to call tradeOnCore() without the KEEPER_ROLE
     vm.startPrank(caller);
-    vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, caller, fulfillmentVault.KEEPER_ROLE()));
+    vm.expectRevert(
+      abi.encodeWithSelector(
+        IAccessControl.AccessControlUnauthorizedAccount.selector, caller, fulfillmentVault.KEEPER_ROLE()
+      )
+    );
     fulfillmentVault.tradeOnCore(asset, isBuy, limitPx, sz);
     vm.stopPrank();
   }
@@ -661,7 +704,9 @@ contract FulfillmentVaultTest is BaseTest {
 
       // Validate that the fulfillmentVault has the same usdt balance on core as before the trade
       balance = PrecompileLib.spotBalance(address(fulfillmentVault), USDT_TOKEN_INDEX);
-      assertEq(balance.total, coreSpotBalance, "FulfillmentVault should have the same usdt balance on core as before the trade");
+      assertEq(
+        balance.total, coreSpotBalance, "FulfillmentVault should have the same usdt balance on core as before the trade"
+      );
     } else {
       // Trade should succeed
       // Validate that the fulfillmentVault has a balance of usdc on core
@@ -670,17 +715,25 @@ contract FulfillmentVaultTest is BaseTest {
 
       // Validate that the fulfillmentVault has correct usdt balance on core
       balance = PrecompileLib.spotBalance(address(fulfillmentVault), USDT_TOKEN_INDEX);
-      assertEq(balance.total, coreSpotBalance - uint256(sz), "FulfillmentVault should have the correct usdt balance on core");
+      assertEq(
+        balance.total, coreSpotBalance - uint256(sz), "FulfillmentVault should have the correct usdt balance on core"
+      );
     }
   }
 
-  function test_fillOrder_revertsWhenDoesNotHaveKeeperRole(address caller, uint256 index, uint256[] memory hintPrevIds) public {
+  function test_fillOrder_revertsWhenDoesNotHaveKeeperRole(address caller, uint256 index, uint256[] memory hintPrevIds)
+    public
+  {
     // Ensure the caller does not have the KEEPER_ROLE
     vm.assume(fulfillmentVault.hasRole(fulfillmentVault.KEEPER_ROLE(), caller) == false);
 
     // Attempt to call fillOrder() without the KEEPER_ROLE
     vm.startPrank(caller);
-    vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, caller, fulfillmentVault.KEEPER_ROLE()));
+    vm.expectRevert(
+      abi.encodeWithSelector(
+        IAccessControl.AccessControlUnauthorizedAccount.selector, caller, fulfillmentVault.KEEPER_ROLE()
+      )
+    );
     fulfillmentVault.fillOrder(index, hintPrevIds);
     vm.stopPrank();
   }
@@ -714,7 +767,9 @@ contract FulfillmentVaultTest is BaseTest {
 
     // Confirm the origination pool has the $100k of usdt
     {
-      assertEq(IUSDX(usdx).balanceOf(address(originationPool)), 100_000e18, "Origination pool should have the $100k of usdx");
+      assertEq(
+        IUSDX(usdx).balanceOf(address(originationPool)), 100_000e18, "Origination pool should have the $100k of usdx"
+      );
     }
 
     // Skip ahead to the deploy phase of the origination pool
@@ -804,7 +859,8 @@ contract FulfillmentVaultTest is BaseTest {
 
     // Validate that the fulfillmentVault has 5k of usdt on core
     {
-      PrecompileLib.SpotBalance memory spotBalance = PrecompileLib.spotBalance(address(fulfillmentVault), USDT_TOKEN_INDEX);
+      PrecompileLib.SpotBalance memory spotBalance =
+        PrecompileLib.spotBalance(address(fulfillmentVault), USDT_TOKEN_INDEX);
       assertEq(spotBalance.total, 5000e8, "FulfillmentVault should have 5k of usdt on core");
     }
 
@@ -824,13 +880,15 @@ contract FulfillmentVaultTest is BaseTest {
 
     // Validate that the fulfillmentVault has 0 usdt on core
     {
-      PrecompileLib.SpotBalance memory spotBalance = PrecompileLib.spotBalance(address(fulfillmentVault), USDT_TOKEN_INDEX);
+      PrecompileLib.SpotBalance memory spotBalance =
+        PrecompileLib.spotBalance(address(fulfillmentVault), USDT_TOKEN_INDEX);
       assertEq(spotBalance.total, 0, "FulfillmentVault should have 0 usdt on core");
     }
 
     // Validate that the fulfillmentVault has usdc on core
     {
-      PrecompileLib.SpotBalance memory spotBalance = PrecompileLib.spotBalance(address(fulfillmentVault), USDC_TOKEN_INDEX);
+      PrecompileLib.SpotBalance memory spotBalance =
+        PrecompileLib.spotBalance(address(fulfillmentVault), USDC_TOKEN_INDEX);
       assertEq(spotBalance.total, 5_000e8, "FulfillmentVault should have 5_000 usdc on core");
     }
 
@@ -850,13 +908,15 @@ contract FulfillmentVaultTest is BaseTest {
 
     // Validate that the fulfillmentVault has 0 usdc on core
     {
-      PrecompileLib.SpotBalance memory spotBalance = PrecompileLib.spotBalance(address(fulfillmentVault), USDC_TOKEN_INDEX);
+      PrecompileLib.SpotBalance memory spotBalance =
+        PrecompileLib.spotBalance(address(fulfillmentVault), USDC_TOKEN_INDEX);
       assertEq(spotBalance.total, 0, "FulfillmentVault should have 0 usdc on core");
     }
 
     // Validate that the fulfillmentVault has hype on core
     {
-      PrecompileLib.SpotBalance memory spotBalance = PrecompileLib.spotBalance(address(fulfillmentVault), HYPE_TOKEN_INDEX);
+      PrecompileLib.SpotBalance memory spotBalance =
+        PrecompileLib.spotBalance(address(fulfillmentVault), HYPE_TOKEN_INDEX);
       console.log("Hype spotBalance on core", spotBalance.total);
       assertEq(spotBalance.total, 100e8, "FulfillmentVault should have 100 hype on core");
     }
@@ -876,7 +936,7 @@ contract FulfillmentVaultTest is BaseTest {
     {
       assertEq(address(fulfillmentVault).balance, 100e18, "FulfillmentVault should have 100 hype on evm");
     }
-    
+
     // Keeper wraps the hype into whype
     {
       vm.startPrank(keeper);
@@ -910,6 +970,8 @@ contract FulfillmentVaultTest is BaseTest {
     assertEq(loanManager.getMortgagePosition(1).tokenId, 1, "Corresponding mortgage position should exist");
 
     // Validate that the fulfillmentVault now has ~5_050 usdx (started with 5k)
-    assertApproxEqAbs(usdx.balanceOf(address(fulfillmentVault)), 5_050e18, 1000e18, "FulfillmentVault should have ~5_050 usdx");
+    assertApproxEqAbs(
+      usdx.balanceOf(address(fulfillmentVault)), 5_050e18, 1000e18, "FulfillmentVault should have ~5_050 usdx"
+    );
   }
 }

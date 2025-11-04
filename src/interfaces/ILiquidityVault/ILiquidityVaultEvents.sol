@@ -25,7 +25,9 @@ interface ILiquidityVaultEvents {
    * @param amountsRedeemed The amounts of redeemable assets received.
    * @param sharesBurned The amount of shares burned.
    */
-  event Redeemed(address indexed user, address[] indexed redeemableAssets, uint256[] amountsRedeemed, uint256 sharesBurned);
+  event Redeemed(
+    address indexed user, address[] indexed redeemableAssets, uint256[] amountsRedeemed, uint256 sharesBurned
+  );
 
   /**
    * @notice Emitted when the whitelist is enforced.

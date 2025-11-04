@@ -29,6 +29,7 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
    * @notice The storage for the FulfillmentVault contract
    * @param _wrappedNativeToken The address of the wrapped native token
    * @param _generalManager The address of the general manager
+   * @param _usdx The address of the USDX token
    * @param _nonce The ongoing nonce that generates distinct cloid values for exchanges on core
    */
   struct FulfillmentVaultStorage {
@@ -39,7 +40,7 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
   }
 
   /**
-   * @dev The storage location of the FulfillmentVault contract
+   * @notice The storage location of the FulfillmentVault contract
    * @dev keccak256(abi.encode(uint256(keccak256("buttonwood.storage.FulfillmentVault")) - 1)) & ~bytes32(uint256(0xff))
    */
   // solhint-disable-next-line const-name-snakecase
@@ -59,6 +60,12 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
 
   /**
    * @dev Initializes the FulfillmentVault contract and calls parent initializers
+   * @param name The name of the fulfillment vault
+   * @param symbol The symbol of the fulfillment vault
+   * @param _decimals The decimals of the fulfillment vault
+   * @param _decimalsOffset The decimals offset for measuring internal precision of shares
+   * @param _wrappedNativeToken The address of the wrapped native token
+   * @param _generalManager The address of the general manager
    */
   // solhint-disable-next-line func-name-mixedcase
   function __FulfillmentVault_init(
@@ -78,9 +85,14 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
 
   /**
    * @dev Initializes the FulfillmentVault contract only
+   * @param _wrappedNativeToken The address of the wrapped native token
+   * @param _generalManager The address of the general manager
    */
   // solhint-disable-next-line func-name-mixedcase
-  function __FulfillmentVault_init_unchained(address _wrappedNativeToken, address _generalManager) internal onlyInitializing {
+  function __FulfillmentVault_init_unchained(address _wrappedNativeToken, address _generalManager)
+    internal
+    onlyInitializing
+  {
     FulfillmentVaultStorage storage $ = _getFulfillmentVaultStorage();
     $._wrappedNativeToken = _wrappedNativeToken;
     $._generalManager = _generalManager;
@@ -89,13 +101,13 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
 
   /**
    * @notice Initializes the FulfillmentVault contract
-   * @param name The name of the liquidity vault
-   * @param symbol The symbol of the liquidity vault
-   * @param _decimals The decimals of the liquidity vault
+   * @param name The name of the fulfillment vault
+   * @param symbol The symbol of the fulfillment vault
+   * @param _decimals The decimals of the fulfillment vault
    * @param _decimalsOffset The decimals offset for measuring internal precision of shares
    * @param _wrappedNativeToken The address of the wrapped native token
    * @param _generalManager The address of the general manager
-   * @param admin The address of the admin
+   * @param admin The address of the admin for the fulfillment vault
    */
   function initialize(
     string memory name,
@@ -169,7 +181,11 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
   }
 
   /// @inheritdoc IFulfillmentVault
-  function bridgeAssetFromCoreToEvm(uint64 assetIndex, uint256 amount) external override onlyRole(KEEPER_ROLE) whenPaused 
+  function bridgeAssetFromCoreToEvm(uint64 assetIndex, uint256 amount)
+    external
+    override
+    onlyRole(KEEPER_ROLE)
+    whenPaused
   {
     emit AssetBridgedFromCoreToEvm(assetIndex, amount);
     CoreWriterLib.bridgeToEvm(assetIndex, amount, true);
@@ -181,8 +197,13 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
     IUSDX(usdx()).burn(amount);
   }
 
-  // @inheritdoc IFulfillmentVault
-  function withdrawUsdTokenFromUsdx(address usdToken, uint256 amount) external override onlyRole(KEEPER_ROLE) whenPaused {
+  /// @inheritdoc IFulfillmentVault
+  function withdrawUsdTokenFromUsdx(address usdToken, uint256 amount)
+    external
+    override
+    onlyRole(KEEPER_ROLE)
+    whenPaused
+  {
     emit UsdTokenWithdrawnFromUsdx(usdToken, amount);
     IUSDX(usdx()).withdraw(usdToken, amount);
   }
@@ -194,7 +215,12 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
   }
 
   /// @inheritdoc IFulfillmentVault
-  function tradeOnCore(uint32 index, bool isBuy, uint64 limitPx, uint64 sz) external override onlyRole(KEEPER_ROLE) whenPaused {
+  function tradeOnCore(uint32 index, bool isBuy, uint64 limitPx, uint64 sz)
+    external
+    override
+    onlyRole(KEEPER_ROLE)
+    whenPaused
+  {
     // Get storage
     FulfillmentVaultStorage storage $ = _getFulfillmentVaultStorage();
     // Emit event

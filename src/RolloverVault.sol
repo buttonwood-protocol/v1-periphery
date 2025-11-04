@@ -23,6 +23,8 @@ contract RolloverVault is LiquidityVault, IRolloverVault {
   /**
    * @custom:storage-location erc7201:buttonwood.storage.RolloverVault
    * @notice The storage for the RolloverVault contract
+   * @param _usdx The address of the USDX token
+   * @param _consol The address of the consol token
    * @param _generalManager The address of the general manager
    * @param _originationPools The addresses of the origination pools the rollover vault currently has a balance in
    * @param _poolIndex Mapping of origination pool addresses to their index in the _originationPools array (offset by 1)
@@ -36,7 +38,7 @@ contract RolloverVault is LiquidityVault, IRolloverVault {
   }
 
   /**
-   * @dev The storage location of the RolloverVault contract
+   * @notice The storage location of the RolloverVault contract
    * @dev keccak256(abi.encode(uint256(keccak256("buttonwood.storage.RolloverVault")) - 1)) & ~bytes32(uint256(0xff))
    */
   // solhint-disable-next-line const-name-snakecase
@@ -56,6 +58,11 @@ contract RolloverVault is LiquidityVault, IRolloverVault {
 
   /**
    * @dev Initializes the RolloverVault contract and calls parent initializers
+   * @param name The name of the rollover vault
+   * @param symbol The symbol of the rollover vault
+   * @param _decimals The decimals of the rollover vault
+   * @param _decimalsOffset The decimals offset for measuring internal precision of shares
+   * @param _generalManager The address of the general manager
    */
   // solhint-disable-next-line func-name-mixedcase
   function __RolloverVault_init(
@@ -77,6 +84,7 @@ contract RolloverVault is LiquidityVault, IRolloverVault {
 
   /**
    * @dev Initializes the RolloverVault contract only
+   * @param _generalManager The address of the general manager
    */
   // solhint-disable-next-line func-name-mixedcase
   function __RolloverVault_init_unchained(address _generalManager) internal onlyInitializing {
@@ -88,12 +96,12 @@ contract RolloverVault is LiquidityVault, IRolloverVault {
 
   /**
    * @notice Initializes the RolloverVault contract
-   * @param name The name of the liquidity vault
-   * @param symbol The symbol of the liquidity vault
-   * @param _decimals The decimals of the liquidity vault
+   * @param name The name of the rollover vault
+   * @param symbol The symbol of the rollover vault
+   * @param _decimals The decimals of the rollover vault
    * @param _decimalsOffset The decimals offset for measuring internal precision of shares
    * @param _generalManager The address of the general manager
-   * @param admin The address of the admin
+   * @param admin The address of the admin for the rollover vault
    */
   function initialize(
     string memory name,
@@ -123,7 +131,8 @@ contract RolloverVault is LiquidityVault, IRolloverVault {
       uint256 ogPoolUsdxBalance = IERC20(usdx()).balanceOf(address(ogPool));
       uint256 ogPoolConsolBalance = IERC20(consol()).balanceOf(address(ogPool));
       uint256 ogPoolBalance = ogPool.balanceOf(address(this));
-      total += Math.mulDiv(ogPoolBalance, ogPoolUsdxBalance, ogPoolTotalSupply) + Math.mulDiv(ogPoolBalance, ogPoolConsolBalance, ogPoolTotalSupply);
+      total += Math.mulDiv(ogPoolBalance, ogPoolUsdxBalance, ogPoolTotalSupply)
+        + Math.mulDiv(ogPoolBalance, ogPoolConsolBalance, ogPoolTotalSupply);
     }
     // Add the USDX and Consol balances that are currently in the rollover vault
     total += IERC20(usdx()).balanceOf(address(this)) + IERC20(consol()).balanceOf(address(this));
@@ -151,17 +160,17 @@ contract RolloverVault is LiquidityVault, IRolloverVault {
     return IGeneralManager(generalManager()).originationPoolScheduler();
   }
 
-  // @inheritdoc IRolloverVault
+  /// @inheritdoc IRolloverVault
   function originationPools() external view override returns (address[] memory) {
     return _getRolloverVaultStorage()._originationPools;
   }
 
-  // @inheritdoc IRolloverVault
+  /// @inheritdoc IRolloverVault
   function isTracked(address originationPool) external view returns (bool) {
     return _getRolloverVaultStorage()._poolIndex[originationPool] != 0;
   }
 
-  // @inheritdoc IRolloverVault
+  /// @inheritdoc IRolloverVault
   function depositOriginationPool(address originationPool, uint256 amount) external onlyRole(KEEPER_ROLE) whenPaused {
     // Get the storage
     RolloverVaultStorage storage $ = _getRolloverVaultStorage();
@@ -194,11 +203,11 @@ contract RolloverVault is LiquidityVault, IRolloverVault {
     IOriginationPool(originationPool).deposit(amount);
   }
 
-  // @inheritdoc IRolloverVault
+  /// @inheritdoc IRolloverVault
   function redeemOriginationPool(address originationPool) external onlyRole(KEEPER_ROLE) whenPaused {
     // Get the storage
     RolloverVaultStorage storage $ = _getRolloverVaultStorage();
-    
+
     // Validate the the origination pool is being tracked
     if ($._poolIndex[originationPool] == 0) {
       revert OriginationPoolNotTracked(originationPool);

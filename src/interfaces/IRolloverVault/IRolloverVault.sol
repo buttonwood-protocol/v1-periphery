@@ -11,7 +11,6 @@ import {IRolloverVaultErrors} from "./IRolloverVaultErrors.sol";
  * @notice Interface for RolloverVault, a vault that facilitates automatically rotates unused assets into origination pools.
  */
 interface IRolloverVault is ILiquidityVault, IRolloverVaultEvents, IRolloverVaultErrors {
-
   /**
    * @notice Gets the address of the USDX token
    * @return The address of the USDX token

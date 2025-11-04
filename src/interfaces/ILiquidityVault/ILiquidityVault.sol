@@ -15,12 +15,14 @@ interface ILiquidityVault is IERC20, ILiquidityVaultEvents, ILiquidityVaultError
    * @notice The role for the keeper
    * @return The role for the keeper
    */
+  // solhint-disable-next-line func-name-mixedcase
   function KEEPER_ROLE() external view returns (bytes32);
 
   /**
    * @notice
    * @return The role for the whitelist
    */
+  // solhint-disable-next-line func-name-mixedcase
   function WHITELIST_ROLE() external view returns (bytes32);
 
   /**

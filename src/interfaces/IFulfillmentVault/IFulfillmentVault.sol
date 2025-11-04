@@ -69,7 +69,6 @@ interface IFulfillmentVault is ILiquidityVault, IFulfillmentVaultEvents {
    */
   function burnUsdx(uint256 amount) external;
 
-
   /**
    * @notice Withdraws usdToken from usdx
    * @param usdToken The address of the usdToken to withdraw

@@ -46,6 +46,7 @@ abstract contract LiquidityVault is
    * @param _depositableAssetIndex The index of the depositable assets (one-indexed)
    * @param _redeemableAssets The addresses of the redeemable assets
    * @param _redeemableAssetIndex The index of the redeemable assets (one-indexed)
+   * @param _whitelistEnforced Whether the whitelist is enforced
    */
   struct LiquidityVaultStorage {
     uint8 _decimals;
@@ -58,7 +59,7 @@ abstract contract LiquidityVault is
   }
 
   /**
-   * @dev The storage location of the LiquidityVault contract
+   * @notice The storage location of the LiquidityVault contract
    * @dev keccak256(abi.encode(uint256(keccak256("buttonwood.storage.LiquidityVault")) - 1)) & ~bytes32(uint256(0xff))
    */
   // solhint-disable-next-line const-name-snakecase
@@ -78,6 +79,12 @@ abstract contract LiquidityVault is
 
   /**
    * @dev Initializes the LiquidityVault contract and calls parent initializers
+   * @param name The name of the liquidity vault
+   * @param symbol The symbol of the liquidity vault
+   * @param _decimals The decimals of the liquidity vault
+   * @param _decimalsOffset The decimals offset for measuring internal precision of shares
+   * @param _depositableAssets The addresses of the depositable assets
+   * @param _redeemableAssets The addresses of the redeemable assets
    */
   // solhint-disable-next-line func-name-mixedcase
   function __LiquidityVault_init(
@@ -94,6 +101,10 @@ abstract contract LiquidityVault is
 
   /**
    * @dev Initializes the LiquidityVault contract only
+   * @param _decimals The decimals of the liquidity vault
+   * @param _decimalsOffset The decimals offset for measuring internal precision of shares
+   * @param _depositableAssets The addresses of the depositable assets
+   * @param _redeemableAssets The addresses of the redeemable assets
    */
   // solhint-disable-next-line func-name-mixedcase
   function __LiquidityVault_init_unchained(
@@ -124,6 +135,7 @@ abstract contract LiquidityVault is
    * @param _decimalsOffset The decimals offset for measuring internal precision of shares
    * @param _depositableAssets The addresses of the depositable assets
    * @param _redeemableAssets The addresses of the redeemable assets
+   * @param admin The address of the admin for the liquidity vault
    */
   function initialize(
     string memory name,
@@ -157,14 +169,13 @@ abstract contract LiquidityVault is
       || interfaceId == type(IERC20Metadata).interfaceId;
   }
 
-  /**
-   * @dev Authorizes the upgrade of the contract. Only the admin can authorize the upgrade
-   * @param newImplementation The address of the new implementation
-   */
+  /// @inheritdoc UUPSUpgradeable
   // solhint-disable-next-line no-empty-blocks
   function _authorizeUpgrade(address newImplementation) internal virtual override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
-  /// @dev When whitelist is enforced, the sender must have the WHITELIST_ROLE. Otherwise, WHITELIST_ROLE is not required.
+  /**
+   * @dev When whitelist is enforced, the sender must have the WHITELIST_ROLE. Otherwise, WHITELIST_ROLE is not required.
+   */
   modifier checkWhitelistEnforced() {
     if (_getLiquidityVaultStorage()._whitelistEnforced) {
       _checkRole(WHITELIST_ROLE, _msgSender());
@@ -203,6 +214,12 @@ abstract contract LiquidityVault is
     return _getLiquidityVaultStorage()._redeemableAssets;
   }
 
+  /**
+   * @dev Updates the assets of the vault
+   * @param asset The address of the asset to update
+   * @param isRedeemable Whether the asset is redeemable
+   * @param add Whether to add the asset or remove the asset
+   */
   function _updateAssets(address asset, bool isRedeemable, bool add) internal {
     // Fetch storage
     LiquidityVaultStorage storage $ = _getLiquidityVaultStorage();
@@ -223,8 +240,10 @@ abstract contract LiquidityVault is
         $._depositableAssets.push(asset);
         $._depositableAssetIndex[asset] = $._depositableAssets.length;
       } else {
-        $._depositableAssets[$._depositableAssetIndex[asset] - 1] = $._depositableAssets[$._depositableAssets.length - 1];
-        $._depositableAssetIndex[$._depositableAssets[$._depositableAssets.length - 1]] = $._depositableAssetIndex[asset];
+        $._depositableAssets[$._depositableAssetIndex[asset] - 1] =
+          $._depositableAssets[$._depositableAssets.length - 1];
+        $._depositableAssetIndex[$._depositableAssets[$._depositableAssets.length - 1]] =
+          $._depositableAssetIndex[asset];
         $._depositableAssets.pop();
         $._depositableAssetIndex[asset] = 0;
       }
@@ -232,6 +251,10 @@ abstract contract LiquidityVault is
     }
   }
 
+  /**
+   * @dev Calculates the total assets of the vault
+   * @return The total assets of the vault
+   */
   function _totalAssets() internal view virtual returns (uint256);
 
   /// @inheritdoc ILiquidityVault
@@ -239,16 +262,28 @@ abstract contract LiquidityVault is
     return _totalAssets();
   }
 
-  /// @dev Internal conversion function (from assets to shares) with support for rounding direction.
+  /**
+   * @dev Internal conversion function (from assets to shares) with support for rounding direction.
+   * @param assets The amount of assets to convert to shares
+   * @param rounding The rounding direction
+   * @return The amount of shares
+   */
   function _convertToShares(uint256 assets, Math.Rounding rounding) internal view virtual returns (uint256) {
     return assets.mulDiv(totalSupply() + 10 ** decimalsOffset(), totalAssets() + 1, rounding);
   }
 
-  /// @dev Internal conversion function (from shares to assets) with support for rounding direction.
+  /**
+   * @dev Internal conversion function (from shares to assets) with support for rounding direction.
+   * @param shares The amount of shares to convert to assets
+   * @param rounding The rounding direction
+   * @return The amount of assets
+   */
   function _convertToAssets(uint256 shares, Math.Rounding rounding) internal view virtual returns (uint256[] memory) {
     uint256[] memory assets = new uint256[](redeemableAssets().length);
     for (uint256 i = 0; i < redeemableAssets().length; i++) {
-      assets[i] = shares.mulDiv(IERC20(redeemableAssets()[i]).balanceOf(address(this)) + 1, totalSupply() + 10 ** decimalsOffset(), rounding);
+      assets[i] = shares.mulDiv(
+        IERC20(redeemableAssets()[i]).balanceOf(address(this)) + 1, totalSupply() + 10 ** decimalsOffset(), rounding
+      );
     }
     return assets;
   }
@@ -263,7 +298,13 @@ abstract contract LiquidityVault is
   }
 
   /// @inheritdoc ILiquidityVault
-  function deposit(address depositableAsset, uint256 assets) external virtual override whenNotPaused checkWhitelistEnforced {
+  function deposit(address depositableAsset, uint256 assets)
+    external
+    virtual
+    override
+    whenNotPaused
+    checkWhitelistEnforced
+  {
     // Validate the depositable asset is in the depositable assets list
     if (_getLiquidityVaultStorage()._depositableAssetIndex[depositableAsset] == 0) {
       revert AssetNotDepositable(depositableAsset);
