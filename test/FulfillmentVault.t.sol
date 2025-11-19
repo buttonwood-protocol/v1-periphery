@@ -221,6 +221,7 @@ contract FulfillmentVaultTest is BaseTest {
     assertEq(fulfillmentVault.usdx(), address(usdx));
     assertEq(fulfillmentVault.nonce(), 0);
     assertTrue(fulfillmentVault.hasRole(fulfillmentVault.DEFAULT_ADMIN_ROLE(), admin));
+    assertFalse(fulfillmentVault.paused(), "FulfillmentVault should not be paused");
   }
 
   function test_supportedInterfaces_valid() public view {
@@ -481,6 +482,83 @@ contract FulfillmentVaultTest is BaseTest {
 
     // Validate that the fulfillmentVault is now holding usdt (dust amount of usdh is omitted because it can get rounded down to 0)
     assertGt(usdt.balanceOf(address(fulfillmentVault)), 0, "FulfillmentVault should be holding usdt");
+  }
+
+  function test_depositUsdTokenToUsdx_revertsWhenDoesNotHaveKeeperRole(address caller, address usdToken, uint256 amount)
+    public
+  {
+    // Ensure the caller does not have the KEEPER_ROLE
+    vm.assume(fulfillmentVault.hasRole(fulfillmentVault.KEEPER_ROLE(), caller) == false);
+
+    // Attempt to call depositUsdTokenToUsdx() without the KEEPER_ROLE
+    vm.startPrank(caller);
+    vm.expectRevert(
+      abi.encodeWithSelector(
+        IAccessControl.AccessControlUnauthorizedAccount.selector, caller, fulfillmentVault.KEEPER_ROLE()
+      )
+    );
+    fulfillmentVault.depositUsdTokenToUsdx(usdToken, amount);
+    vm.stopPrank();
+  }
+
+  function test_depositUsdTokenToUsdx_revertsWhenNotPaused(address usdToken, uint256 amount) public {
+    // Validate that the fulfillmentVault is not paused
+    assertFalse(fulfillmentVault.paused(), "FulfillmentVault should not be paused");
+
+    // Attempt to call depositUsdTokenToUsdx() when the fulfillmentVault is not paused
+    vm.startPrank(keeper);
+    vm.expectRevert(abi.encodeWithSelector(PausableUpgradeable.ExpectedPause.selector));
+    fulfillmentVault.depositUsdTokenToUsdx(usdToken, amount);
+    vm.stopPrank();
+  }
+
+  function test_depositUsdTokenToUsdx(uint128 depositAmount, uint128 usdDepositAmount) public {
+    // Ensure depositAmount is greater than $1
+    depositAmount = uint128(bound(depositAmount, 1e6, type(uint128).max));
+
+    // Ensure usdDepositAmount is greater than $1
+    usdDepositAmount = uint128(bound(usdDepositAmount, 1e6, type(uint128).max));
+
+    // User deposits depositAmount of usdt into the fulfillmentVault (after wrapping it to usdx)
+    vm.startPrank(user);
+    {
+      deal(address(usdt), user, depositAmount);
+      usdt.approve(address(usdx), depositAmount);
+      usdx.deposit(address(usdt), depositAmount);
+      uint256 usdxAmount = usdx.convertAmount(address(usdt), depositAmount);
+      usdx.approve(address(fulfillmentVault), usdxAmount);
+      fulfillmentVault.deposit(address(usdx), usdxAmount);
+    }
+    vm.stopPrank();
+
+    // Record the user's balance in the fulfillmentVault
+    uint256 fBalance = fulfillmentVault.balanceOf(user);
+
+    // Record the fulfillmentVault's balance in usdx
+    uint256 initialUsdxBalance = usdx.balanceOf(address(fulfillmentVault));
+
+    // Keeper pauses the fulfillmentVault
+    vm.startPrank(keeper);
+    fulfillmentVault.setPaused(true);
+    vm.stopPrank();
+
+    // Donate usdDepositAmount of usdt to the fulfillmentVault
+    deal(address(usdt), address(fulfillmentVault), usdDepositAmount);
+
+    // Keeper calls depositUsdTokenToUsdx() with usdDepositAmount
+    vm.startPrank(keeper);
+    fulfillmentVault.depositUsdTokenToUsdx(address(usdt), usdDepositAmount);
+    vm.stopPrank();
+
+    // Validate that the user's shares have not changed
+    assertEq(fulfillmentVault.balanceOf(user), fBalance, "User should have the same balance in the fulfillmentVault");
+
+    // Validate that the fulfillmentVault is now holding more usdx
+    assertEq(
+      usdx.balanceOf(address(fulfillmentVault)),
+      initialUsdxBalance + IUSDX(usdx).convertAmount(address(usdt), usdDepositAmount),
+      "FulfillmentVault should be holding the additional usdx amount"
+    );
   }
 
   function test_withdrawUsdTokenFromUsdx_revertsWhenDoesNotHaveKeeperRole(

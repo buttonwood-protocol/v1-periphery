@@ -46,6 +46,13 @@ interface IFulfillmentVaultEvents {
   event UsdTokenWithdrawnFromUsdx(address indexed usdToken, uint256 amount);
 
   /**
+   * @notice Emitted when a usd token is deposited into usdx.
+   * @param usdToken The address of the usd token that was deposited.
+   * @param amount The amount of usd token that was deposited.
+   */
+  event UsdTokenDepositedToUsdx(address indexed usdToken, uint256 amount);
+
+  /**
    * @notice Emitted when an asset is bridged from evm to core.
    * @param asset The address of the asset that was bridged.
    * @param amount The amount of asset that was bridged (in evm amounts)
@@ -54,13 +61,13 @@ interface IFulfillmentVaultEvents {
 
   /**
    * @notice Emitted when a trade is made on core.
-   * @param assetId The asset id in the trade.
+   * @param spotId The spotId of the trade.
    * @param isBuy Whether the trade is a buy or sell.
    * @param limitPx The limit price of the trade.
    * @param sz The size of the trade.
    * @param cloid The cloid of the trade, generated from the nonce.
    */
-  event TradeOnCore(uint32 indexed assetId, bool isBuy, uint64 limitPx, uint64 sz, uint128 indexed cloid);
+  event TradeOnCore(uint32 indexed spotId, bool isBuy, uint64 limitPx, uint64 sz, uint128 indexed cloid);
 
   /**
    * @notice Emitted when an order is filled.

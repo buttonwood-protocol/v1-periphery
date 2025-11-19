@@ -77,6 +77,13 @@ interface IFulfillmentVault is ILiquidityVault, IFulfillmentVaultEvents {
   function withdrawUsdTokenFromUsdx(address usdToken, uint256 amount) external;
 
   /**
+   * @notice Deposits usdToken into usdx
+   * @param usdToken The address of the usdToken to deposit
+   * @param amount The amount of usdToken to deposit
+   */
+  function depositUsdTokenToUsdx(address usdToken, uint256 amount) external;
+
+  /**
    * @notice Bridges assets from evm to core
    * @param asset The address of the asset to bridge
    * @param amount The amount of asset to bridge
@@ -85,12 +92,12 @@ interface IFulfillmentVault is ILiquidityVault, IFulfillmentVaultEvents {
 
   /**
    * @notice Trades tokens on core
-   * @param asset The assetId of the asset to trade
+   * @param spotId The spotId of the asset to trade (identifies the trading pair)
    * @param isBuy Whether to buy or sell
    * @param limitPx The limit price. Note, This is is (weiUnits - szUnits). For USDT and USDH, weiUnits is 1e6.
    * @param sz The size of the trade. Note, this is in szUnits. For USDT and USDH, szUnits is 1e2.
    */
-  function tradeOnCore(uint32 asset, bool isBuy, uint64 limitPx, uint64 sz) external;
+  function tradeOnCore(uint32 spotId, bool isBuy, uint64 limitPx, uint64 sz) external;
 
   /**
    * @notice Fills an order from the order pool

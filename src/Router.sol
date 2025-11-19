@@ -201,13 +201,14 @@ contract Router is
     if (creationRequest.base.isCompounding) {
       for (uint256 i = 0; i < creationRequest.base.originationPools.length; i++) {
         // If compounding, need to collect 1/2 of the collateral amount + commission fee (this is in the form of collateral)
-        collateralCollected += IOriginationPool(creationRequest.base.originationPools[i])
-          .calculateReturnAmount((creationRequest.base.collateralAmounts[i] + 1) / 2);
+        collateralCollected += IOriginationPool(creationRequest.base.originationPools[i]).calculateReturnAmount(
+          (creationRequest.base.collateralAmounts[i] + 1) / 2
+        );
         (uint256 _cost, uint8 _collateralDecimals) =
           _calculateCost(creationRequest.collateral, creationRequest.base.collateralAmounts[i] / 2);
         collateralDecimals = _collateralDecimals;
-        paymentAmount += (2 * _cost)
-          - IOriginationPool(creationRequest.base.originationPools[i]).calculateReturnAmount(_cost);
+        paymentAmount +=
+          (2 * _cost) - IOriginationPool(creationRequest.base.originationPools[i]).calculateReturnAmount(_cost);
       }
     } else {
       for (uint256 i = 0; i < creationRequest.base.originationPools.length; i++) {
@@ -350,13 +351,9 @@ contract Router is
    * @param oPoolConfigId The OPoolConfigId of the origination pool config
    * @return originationPool The origination pool
    */
-  function _getOrCreateOriginationPool(OPoolConfigId oPoolConfigId)
-    internal
-    returns (IOriginationPool originationPool)
-  {
-    originationPool = IOriginationPool(
-      IOriginationPoolScheduler(originationPoolScheduler).predictOriginationPool(oPoolConfigId)
-    );
+  function _getOrCreateOriginationPool(OPoolConfigId oPoolConfigId) internal returns (IOriginationPool originationPool) {
+    originationPool =
+      IOriginationPool(IOriginationPoolScheduler(originationPoolScheduler).predictOriginationPool(oPoolConfigId));
     if (!IOriginationPoolScheduler(originationPoolScheduler).isRegistered(address(originationPool))) {
       IOriginationPool(IOriginationPoolScheduler(originationPoolScheduler).deployOriginationPool(oPoolConfigId));
     }

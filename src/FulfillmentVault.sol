@@ -209,13 +209,20 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
   }
 
   /// @inheritdoc IFulfillmentVault
+  function depositUsdTokenToUsdx(address usdToken, uint256 amount) external override onlyRole(KEEPER_ROLE) whenPaused {
+    emit UsdTokenDepositedToUsdx(usdToken, amount);
+    IERC20(usdToken).approve(address(usdx()), amount);
+    IUSDX(usdx()).deposit(usdToken, amount);
+  }
+
+  /// @inheritdoc IFulfillmentVault
   function bridgeAssetFromEvmToCore(address asset, uint256 amount) external override onlyRole(KEEPER_ROLE) whenPaused {
     emit AssetBridgedFromEvmToCore(asset, amount);
     CoreWriterLib.bridgeToCore(asset, amount);
   }
 
   /// @inheritdoc IFulfillmentVault
-  function tradeOnCore(uint32 index, bool isBuy, uint64 limitPx, uint64 sz)
+  function tradeOnCore(uint32 spotId, bool isBuy, uint64 limitPx, uint64 sz)
     external
     override
     onlyRole(KEEPER_ROLE)
@@ -224,9 +231,9 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
     // Get storage
     FulfillmentVaultStorage storage $ = _getFulfillmentVaultStorage();
     // Emit event
-    emit TradeOnCore(index, isBuy, limitPx, sz, $._nonce);
+    emit TradeOnCore(spotId, isBuy, limitPx, sz, $._nonce);
     // Place an IOC limit order to trade usdc for asset on core
-    CoreWriterLib.placeLimitOrder(HLConversions.spotToAssetId(index), isBuy, limitPx, sz, false, 3, $._nonce);
+    CoreWriterLib.placeLimitOrder(HLConversions.spotToAssetId(spotId), isBuy, limitPx, sz, false, 3, $._nonce);
     $._nonce++;
   }
 
