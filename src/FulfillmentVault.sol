@@ -218,7 +218,11 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
   /// @inheritdoc IFulfillmentVault
   function bridgeAssetFromEvmToCore(address asset, uint256 amount) external override onlyRole(KEEPER_ROLE) whenPaused {
     emit AssetBridgedFromEvmToCore(asset, amount);
-    CoreWriterLib.bridgeToCore(asset, amount);
+    if (asset == address(0)) {
+      CoreWriterLib.bridgeToCore(uint64(150), amount);
+    } else {
+      CoreWriterLib.bridgeToCore(asset, amount);
+    }
   }
 
   /// @inheritdoc IFulfillmentVault
