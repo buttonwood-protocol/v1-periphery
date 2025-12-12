@@ -18,6 +18,12 @@ interface IRouter is IRouterErrors {
   function generalManager() external view returns (address);
 
   /**
+   * @notice The address of the rollover vault contract
+   * @return The address of the rollover vault contract
+   */
+  function rolloverVault() external view returns (address);
+
+  /**
    * @notice The address of the Pyth contract
    * @return The address of the Pyth contract
    */
@@ -142,9 +148,9 @@ interface IRouter is IRouterErrors {
    * @notice Deposit into an origination pool
    * @param oPoolConfigId The OPoolConfigId of the origination pool to deposit into
    * @param usdToken The address of the usdToken to pull in
-   * @param usdxAmount The amount of USDX to pull in
+   * @param usdTokenAmount The amount of usdToken to pull in
    */
-  function originationPoolDeposit(OPoolConfigId oPoolConfigId, address usdToken, uint256 usdxAmount) external;
+  function originationPoolDeposit(OPoolConfigId oPoolConfigId, address usdToken, uint256 usdTokenAmount) external;
 
   /**
    * @notice Quotes the amount of output token that would be received for a given amount of input token
@@ -165,4 +171,11 @@ interface IRouter is IRouterErrors {
    * @param inputAmount The amount of input token to convert
    */
   function wrap(address inputToken, address outputToken, uint256 inputAmount) external;
+
+  /**
+   * @notice Deposit into the rollover vault
+   * @param usdToken The address of the usdToken to pull in
+   * @param usdTokenAmount The amount of usdToken to pull in
+   */
+  function rolloverVaultDeposit(address usdToken, uint256 usdTokenAmount) external;
 }

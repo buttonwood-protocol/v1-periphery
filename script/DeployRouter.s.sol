@@ -1,23 +1,15 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.20;
 
-import {BaseScript, console} from "./BaseScript.s.sol";
+import {DeployFulfillmentVaultScript} from "./DeployFulfillmentVault.s.sol";
+import {console} from "forge-std/console.sol";
 import {Router} from "../src/Router.sol";
 
-contract DeployRouterScript is BaseScript {
-  address public wrappedNativeTokenAddress;
-  address public generalManagerAddress;
-  address public pythAddress;
+contract DeployRouterScript is DeployFulfillmentVaultScript {
   Router public router;
 
   function setUp() public virtual override {
     super.setUp();
-    wrappedNativeTokenAddress = vm.envAddress("WRAPPED_NATIVE_TOKEN_ADDRESS");
-    console.log("Wrapped native token address: %s", wrappedNativeTokenAddress);
-    generalManagerAddress = vm.envAddress("GENERAL_MANAGER_ADDRESS");
-    console.log("General manager address: %s", generalManagerAddress);
-    pythAddress = vm.envAddress("PYTH_ADDRESS");
-    console.log("Pyth address: %s", pythAddress);
   }
 
   function run() public virtual override {
@@ -28,7 +20,7 @@ contract DeployRouterScript is BaseScript {
   }
 
   function deployRouter() public {
-    router = new Router(wrappedNativeTokenAddress, generalManagerAddress, pythAddress);
+    router = new Router(wrappedNativeTokenAddress, generalManagerAddress, address(rolloverVault), pythAddress);
     router.approveCollaterals();
     router.approveUsdTokens();
   }

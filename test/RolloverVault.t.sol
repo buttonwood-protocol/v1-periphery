@@ -23,77 +23,21 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 contract RolloverVaultTest is BaseTest {
   using Math for uint256;
 
-  string NAME = "Test Rollover Vault";
-  string SYMBOL = "tRV";
-  uint8 DECIMALS = 26; // ToDo: Make this 8 + usdx decimals????
-  uint8 DECIMALS_OFFSET = 8;
-
-  RolloverVault public rolloverVault;
-
-  address public user = makeAddr("user");
-  address public keeper = makeAddr("keeper");
-
-  uint256 public PRIME_AMOUNT = 1e18; // The initial amount of depositableAsset to prime the liquidityVault with (in depositableAsset decimals)
-
-  function primeRolloverVault() public {
-    // Mint 0.5 PRIME_AMOUNT of usdt0 and usdh to the admin
-    vm.startPrank(admin);
-    uint256 usdtAmount = usdx.convertUnderlying(address(usdt), PRIME_AMOUNT / 2);
-    uint256 usdhAmount = usdx.convertUnderlying(address(usdh), PRIME_AMOUNT / 2);
-    deal(address(usdt), admin, usdtAmount);
-    deal(address(usdh), admin, usdhAmount);
-    vm.stopPrank();
-
-    // Admin primes the rolloverVault with PRIME_AMOUNT of usdx
-    vm.startPrank(admin);
-    usdt.approve(address(usdx), usdtAmount);
-    usdh.approve(address(usdx), usdhAmount);
-    usdx.deposit(address(usdt), usdtAmount);
-    usdx.deposit(address(usdh), usdhAmount);
-    usdx.approve(address(rolloverVault), PRIME_AMOUNT);
-    rolloverVault.deposit(address(usdx), PRIME_AMOUNT);
-    vm.stopPrank();
-
-    // Transfer the rolloverVault balance to the rolloverVault itself
-    vm.startPrank(admin);
-    rolloverVault.transfer(address(rolloverVault), rolloverVault.balanceOf(admin));
-    vm.stopPrank();
-  }
-
   function setUp() public {
     // Setup core
     setUpCore();
 
-    // Deploy the rolloverVault
-    RolloverVault rolloverVaultImplementation = new RolloverVault();
-    bytes memory initializerData = abi.encodeWithSelector(
-      RolloverVault.initialize.selector,
-      NAME,
-      SYMBOL,
-      DECIMALS,
-      DECIMALS_OFFSET,
-      address(generalManager),
-      address(admin)
-    );
-    ERC1967Proxy proxy = new ERC1967Proxy(address(rolloverVaultImplementation), initializerData);
-    rolloverVault = RolloverVault(payable(address(proxy)));
-
-    // Prime the rolloverVault
-    primeRolloverVault();
-
-    // Grant the keeper the KEEPER_ROLE
-    vm.startPrank(admin);
-    rolloverVault.grantRole(rolloverVault.KEEPER_ROLE(), keeper);
-    vm.stopPrank();
+    // Setup RolloverVault
+    setUpRolloverVault();
   }
 
   function test_initialize() public {
-    assertEq(rolloverVault.name(), NAME);
-    assertEq(rolloverVault.symbol(), SYMBOL);
-    assertEq(rolloverVault.decimals(), DECIMALS);
-    assertEq(rolloverVault.decimalsOffset(), DECIMALS_OFFSET);
+    assertEq(rolloverVault.name(), ROLLLOVER_VAULT_NAME);
+    assertEq(rolloverVault.symbol(), ROLLLOVER_VAULT_SYMBOL);
+    assertEq(rolloverVault.decimals(), ROLLLOVER_VAULT_DECIMALS);
+    assertEq(rolloverVault.decimalsOffset(), ROLLLOVER_VAULT_DECIMALS_OFFSET);
     assertEq(rolloverVault.totalAssets(), PRIME_AMOUNT);
-    assertEq(rolloverVault.totalSupply(), PRIME_AMOUNT * (10 ** DECIMALS_OFFSET));
+    assertEq(rolloverVault.totalSupply(), PRIME_AMOUNT * (10 ** ROLLLOVER_VAULT_DECIMALS_OFFSET));
     assertEq(rolloverVault.depositableAssets()[0], address(usdx));
     assertEq(rolloverVault.redeemableAssets()[0], address(usdx));
     assertEq(rolloverVault.redeemableAssets()[1], address(consol));

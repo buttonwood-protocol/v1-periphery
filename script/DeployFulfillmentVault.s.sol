@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.20;
 
-import {DeployRolloverVaultScript, console} from "./DeployRolloverVault.s.sol";
+import {DeployRolloverVaultScript} from "./DeployRolloverVault.s.sol";
+import {console} from "forge-std/console.sol";
 import {FulfillmentVault} from "../src/FulfillmentVault.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
@@ -54,6 +55,12 @@ contract DeployFulfillmentVaultScript is DeployRolloverVaultScript {
     // Deploy the proxy with the initializer data
     ERC1967Proxy proxy = new ERC1967Proxy(address(fulfillmentVaultImplementation), initializerData);
     fulfillmentVault = FulfillmentVault(payable(address(proxy)));
+
+    // Grant the keeper role to the vault admin address
+    fulfillmentVault.grantRole(fulfillmentVault.KEEPER_ROLE(), fulfillmentVaultAdminAddress);
+
+    // Grant the whitelist role to the vault admin address
+    fulfillmentVault.grantRole(fulfillmentVault.WHITELIST_ROLE(), fulfillmentVaultAdminAddress);
   }
 
   function logFulfillmentVault(string memory objectKey) public returns (string memory json) {

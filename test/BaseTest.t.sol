@@ -41,6 +41,7 @@ import {ConversionQueue} from "@core/ConversionQueue.sol";
 import {IPyth} from "@pythnetwork/IPyth.sol";
 import {MockPyth} from "@pythnetwork/MockPyth.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
+import {RolloverVault} from "../src/RolloverVault.sol";
 
 contract BaseTest is Test {
   using OPoolConfigIdLibrary for OPoolConfigId;
@@ -51,6 +52,8 @@ contract BaseTest is Test {
   address public borrower = makeAddr("borrower");
   address public fulfiller = makeAddr("fulfiller");
   address public rando = makeAddr("rando");
+  address public user = makeAddr("user");
+  address public keeper = makeAddr("keeper");
 
   // Mainnet Addresses
   address public USDT0_ADDRESS = 0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb;
@@ -99,11 +102,17 @@ contract BaseTest is Test {
   uint16 public ogPoolMultiplierBps = 200; // 2% commission
   // Order Pool Args
   uint256 public opMaximumOrderDuration = 10 minutes; // Orders expire in 10 minutes
-
   // Constants
   address public constant WHYPE_ADDRESS = 0x5555555555555555555555555555555555555555;
   string public constant MORTGAGE_NFT_NAME = "Mortgage NFT";
   string public constant MORTGAGE_NFT_SYMBOL = "MNFT";
+  // RolloverVault Args
+  string ROLLLOVER_VAULT_NAME = "Test Rollover Vault";
+  string ROLLLOVER_VAULT_SYMBOL = "tRV";
+  uint8 ROLLLOVER_VAULT_DECIMALS = 24; // Make this 6 + usdx decimals
+  uint8 ROLLLOVER_VAULT_DECIMALS_OFFSET = 6;
+  RolloverVault public rolloverVault;
+  uint256 public PRIME_AMOUNT = 1e18; // The initial amount of depositableAsset to prime the liquidityVault with (in depositableAsset decimals)
 
   function _deployWHype() internal {
     // Deploy the WHYPE to the 0x555... address
@@ -178,11 +187,9 @@ contract BaseTest is Test {
 
   function _createUSDX() internal {
     // Make usdt
-    // usdt = IERC20(USDT0_ADDRESS);
     usdt = new MockERC20("USDT", "USDT", 18);
     vm.label(address(usdt), "USDT");
     // Make usdh
-    // usdh = IERC20(USDH0_ADDRESS);
     usdh = new MockERC20("USDH", "USDH", 18);
     vm.label(address(usdh), "USDH");
     // Make usdx
@@ -196,7 +203,6 @@ contract BaseTest is Test {
   }
 
   function _setupCollaterals() internal {
-    // ubtc = IERC20(UBTC_ADDRESS);
     ubtc = new MockERC20("UBTC", "UBTC", 8);
     vm.label(address(ubtc), "UBTC");
   }
@@ -368,5 +374,54 @@ contract BaseTest is Test {
     pyth = new MockPyth(120, 0); // 120 seconds valid time period, 0 update fee
   }
 
-  function test_constructor() public view {}
+  function primeRolloverVault() public {
+    // Mint 0.5 PRIME_AMOUNT of usdt0 and usdh to the admin
+    vm.startPrank(admin);
+    uint256 usdtAmount = usdx.convertUnderlying(address(usdt), PRIME_AMOUNT / 2);
+    uint256 usdhAmount = usdx.convertUnderlying(address(usdh), PRIME_AMOUNT / 2);
+    deal(address(usdt), admin, usdtAmount);
+    deal(address(usdh), admin, usdhAmount);
+    vm.stopPrank();
+
+    // Admin primes the rolloverVault with PRIME_AMOUNT of usdx
+    vm.startPrank(admin);
+    usdt.approve(address(usdx), usdtAmount);
+    usdh.approve(address(usdx), usdhAmount);
+    usdx.deposit(address(usdt), usdtAmount);
+    usdx.deposit(address(usdh), usdhAmount);
+    usdx.approve(address(rolloverVault), PRIME_AMOUNT);
+    rolloverVault.deposit(address(usdx), PRIME_AMOUNT);
+    vm.stopPrank();
+
+    // Transfer the rolloverVault balance to the rolloverVault itself
+    vm.startPrank(admin);
+    rolloverVault.transfer(address(rolloverVault), rolloverVault.balanceOf(admin));
+    vm.stopPrank();
+  }
+
+  function setUpRolloverVault() public {
+    // Deploy the rolloverVault
+    RolloverVault rolloverVaultImplementation = new RolloverVault();
+    bytes memory initializerData = abi.encodeWithSelector(
+      RolloverVault.initialize.selector,
+      ROLLLOVER_VAULT_NAME,
+      ROLLLOVER_VAULT_SYMBOL,
+      ROLLLOVER_VAULT_DECIMALS,
+      ROLLLOVER_VAULT_DECIMALS_OFFSET,
+      address(generalManager),
+      address(admin)
+    );
+    ERC1967Proxy proxy = new ERC1967Proxy(address(rolloverVaultImplementation), initializerData);
+    rolloverVault = RolloverVault(payable(address(proxy)));
+
+    // Prime the rolloverVault
+    primeRolloverVault();
+
+    // Grant the keeper the KEEPER_ROLE
+    vm.startPrank(admin);
+    rolloverVault.grantRole(rolloverVault.KEEPER_ROLE(), keeper);
+    vm.stopPrank();
+  }
+
+  function test_constructor() public view virtual {}
 }

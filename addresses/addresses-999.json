@@ -1,5 +1,5 @@
 {
-  "fulfillmentVaultAddress": "0x3D177625F3AC203C5AeDFE5faD12c8f66B198436",
-  "rolloverVaultAddress": "0x3f93fabBf59B808cC47487dD211dD782020C98dC",
-  "routerAddress": "0x1765d303bA825aD22a3DCBcDc8cC540575E0B9f6"
+  "fulfillmentVaultAddress": "0xB8DE4aB6C65e274630F5279f74eB69b66327CE50",
+  "rolloverVaultAddress": "0x8ecF2c64F77A09042daB6A2DB45E63A4b0eAD3bb",
+  "routerAddress": "0x3d36541d8C432B3c53e3D9F3d1940f2e3cCAA60c"
 }

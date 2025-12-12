@@ -51,11 +51,6 @@ contract FulfillmentVaultTest is BaseTest {
 
   FulfillmentVault public fulfillmentVault;
 
-  address public user = makeAddr("user");
-  address public keeper = makeAddr("keeper");
-
-  uint256 public PRIME_AMOUNT = 1e18; // The initial amount of depositableAsset to prime the liquidityVault with (in depositableAsset decimals)
-
   function mockTokenInfo(
     uint32 tokenIndex,
     address evmContract,
@@ -829,7 +824,7 @@ contract FulfillmentVaultTest is BaseTest {
 
   function test_fillOrder_completeFlow() public {
     // Deploying a new router
-    Router router = new Router(address(whype), address(generalManager), address(pyth)); // Using btc as wrapped native token for testing
+    Router router = new Router(address(whype), address(generalManager), address(rolloverVault), address(pyth));
     // Run the approve functions on the router
     router.approveCollaterals();
     router.approveUsdTokens();
