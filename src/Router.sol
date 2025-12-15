@@ -19,7 +19,7 @@ import {
   IOriginationPoolScheduler,
   IOriginationPoolSchedulerErrors
 } from "@core/interfaces/IOriginationPoolScheduler/IOriginationPoolScheduler.sol";
-import {IRouter} from "./interfaces/IRouter.sol";
+import {IRouter} from "./interfaces/IRouter/IRouter.sol";
 import {IMortgageNFT} from "@core/interfaces/IMortgageNFT/IMortgageNFT.sol";
 import {IMortgageNFTErrors} from "@core/interfaces/IMortgageNFT/IMortgageNFTErrors.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
@@ -28,6 +28,7 @@ import {IPyth} from "@pythnetwork/IPyth.sol";
 import {PythErrors} from "@pythnetwork/PythErrors.sol";
 import {MortgageMath} from "@core/libraries/MortgageMath.sol";
 import {MortgagePosition} from "@core/types/MortgagePosition.sol";
+import {IRolloverVault} from "./interfaces/IRolloverVault/IRolloverVault.sol";
 
 /**
  * @title Router
@@ -50,6 +51,8 @@ contract Router is
   /// @inheritdoc IRouter
   address public immutable generalManager;
   /// @inheritdoc IRouter
+  address public immutable rolloverVault;
+  /// @inheritdoc IRouter
   address public immutable pyth;
   /// @inheritdoc IRouter
   address public immutable wrappedNativeToken;
@@ -63,11 +66,13 @@ contract Router is
   /**
    * @param _wrappedNativeToken The address of the wrapped native token (i.e., whype: 0x555...)
    * @param _generalManager The address of the general manager contract
+   * @param _rolloverVault The address of the rollover vault contract
    * @param _pyth The address of the Pyth contract
    */
-  constructor(address _wrappedNativeToken, address _generalManager, address _pyth) {
+  constructor(address _wrappedNativeToken, address _generalManager, address _rolloverVault, address _pyth) {
     wrappedNativeToken = _wrappedNativeToken;
     generalManager = _generalManager;
+    rolloverVault = _rolloverVault;
     pyth = _pyth;
     usdx = IGeneralManager(_generalManager).usdx();
     consol = IGeneralManager(_generalManager).consol();
@@ -442,5 +447,23 @@ contract Router is
 
     // Transfer the output token to the user
     IERC20(outputToken).safeTransfer(_msgSender(), IERC20(outputToken).balanceOf(address(this)));
+  }
+
+  /**
+   * @inheritdoc IRouter
+   */
+  function rolloverVaultDeposit(address usdToken, uint256 usdTokenAmount) external {
+    // Convert the usdTokenAmount to USDX
+    uint256 usdxAmount = convert(usdToken, usdx, usdTokenAmount);
+
+    // Pull in the usdToken from the user
+    _pullUsdToken(usdToken, usdxAmount);
+
+    // Deposit the USDX into the rollover vault
+    IUSDX(usdx).approve(rolloverVault, usdxAmount);
+    IRolloverVault(rolloverVault).deposit(usdx, usdxAmount);
+
+    // Transfer the rollover vault share tokens to the user
+    IRolloverVault(rolloverVault).transfer(msg.sender, IRolloverVault(rolloverVault).balanceOf(address(this)));
   }
 }

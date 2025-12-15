@@ -11,6 +11,7 @@ import {IFulfillmentVault} from "./interfaces/IFulfillmentVault/IFulfillmentVaul
 import {IUSDX} from "@core/interfaces/IUSDX/IUSDX.sol";
 import {IOrderPool} from "@core/interfaces/IOrderPool/IOrderPool.sol";
 import {IGeneralManager} from "@core/interfaces/IGeneralManager/IGeneralManager.sol";
+import {HLConstants} from "@hyper-evm-lib/src/common/HLConstants.sol";
 
 /**
  * @title FulfillmentVault
@@ -219,7 +220,7 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
   function bridgeAssetFromEvmToCore(address asset, uint256 amount) external override onlyRole(KEEPER_ROLE) whenPaused {
     emit AssetBridgedFromEvmToCore(asset, amount);
     if (asset == address(0)) {
-      CoreWriterLib.bridgeToCore(uint64(150), amount);
+      CoreWriterLib.bridgeToCore(HLConstants.hypeTokenIndex(), amount);
     } else {
       CoreWriterLib.bridgeToCore(asset, amount);
     }
@@ -250,5 +251,10 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
     // Emit event
     emit OrderFilled(index, hintPrevIds);
     IOrderPool(orderPool()).processOrders(indices, hintPrevIdsList);
+    // Send collected fees to the keeper by sending the native balance
+    (bool success,) = _msgSender().call{value: address(this).balance}("");
+    if (!success) {
+      revert FailedToWithdrawNativeGas(address(this).balance);
+    }
   }
 }

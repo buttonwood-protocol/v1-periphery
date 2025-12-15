@@ -2,9 +2,10 @@
 pragma solidity ^0.8.20;
 
 /// forge-lint: disable-next-line(unused-import)
-import {DeployFulfillmentVaultScript, console} from "./DeployFulfillmentVault.s.sol";
+import {DeployRouterScript} from "./DeployRouter.s.sol";
+import {console} from "forge-std/console.sol";
 
-contract DeployAllScript is DeployFulfillmentVaultScript {
+contract DeployAllScript is DeployRouterScript {
   function setUp() public virtual override {
     super.setUp();
   }

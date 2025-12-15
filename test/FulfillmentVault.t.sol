@@ -51,11 +51,6 @@ contract FulfillmentVaultTest is BaseTest {
 
   FulfillmentVault public fulfillmentVault;
 
-  address public user = makeAddr("user");
-  address public keeper = makeAddr("keeper");
-
-  uint256 public PRIME_AMOUNT = 1e18; // The initial amount of depositableAsset to prime the liquidityVault with (in depositableAsset decimals)
-
   function mockTokenInfo(
     uint32 tokenIndex,
     address evmContract,
@@ -829,7 +824,7 @@ contract FulfillmentVaultTest is BaseTest {
 
   function test_fillOrder_completeFlow() public {
     // Deploying a new router
-    Router router = new Router(address(whype), address(generalManager), address(pyth)); // Using btc as wrapped native token for testing
+    Router router = new Router(address(whype), address(generalManager), address(rolloverVault), address(pyth));
     // Run the approve functions on the router
     router.approveCollaterals();
     router.approveUsdTokens();
@@ -885,12 +880,14 @@ contract FulfillmentVaultTest is BaseTest {
     {
       // Calculate the amount of usdx to collect from the borrower
       (, uint256 requiredUsdxCollected,,) = router.calculateCollectedAmounts(creationRequest);
+      // Mint 0.01e18 of native tokens to the borrower
+      deal(address(borrower), 0.01e18);
       // Mint the required usdt (NOT usdx) to the borrower and approve it to the router
       vm.startPrank(borrower);
       uint256 usdtAmount = router.convert(address(usdx), address(usdt), requiredUsdxCollected);
       deal(address(usdt), borrower, usdtAmount);
       usdt.approve(address(router), usdtAmount);
-      router.requestMortgage{value: 0}(address(usdt), creationRequest, false, 2576e18);
+      router.requestMortgage{value: 0.01e18}(address(usdt), creationRequest, false, 2576e18);
       vm.stopPrank();
     }
 
@@ -1034,6 +1031,9 @@ contract FulfillmentVaultTest is BaseTest {
       vm.stopPrank();
     }
 
+    // Validate that the keeper doesn't have any native balance right now
+    assertEq(address(keeper).balance, 0, "Caller should have no native balance right now");
+
     // Keeper fills the order from the order pool
     {
       uint256 index = 0;
@@ -1051,5 +1051,8 @@ contract FulfillmentVaultTest is BaseTest {
     assertApproxEqAbs(
       usdx.balanceOf(address(fulfillmentVault)), 5_050e18, 1000e18, "FulfillmentVault should have ~5_050 usdx"
     );
+
+    // Validate keeper has received the gas fee in native tokens
+    assertEq(address(keeper).balance, 0.01e18, "Caller should have received the gas fee in native tokens");
   }
 }

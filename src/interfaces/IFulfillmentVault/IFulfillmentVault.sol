@@ -3,13 +3,14 @@ pragma solidity ^0.8.20;
 
 import {ILiquidityVault} from "../ILiquidityVault/ILiquidityVault.sol";
 import {IFulfillmentVaultEvents} from "./IFulfillmentVaultEvents.sol";
+import {IFulfillmentVaultErrors} from "./IFulfillmentVaultErrors.sol";
 
 /**
  * @title IFulfillmentVault
  * @author @SocksNFlops
  * @notice Interface for FulfillmentVault, a vault that facilitates liquidity provisioning for fulfilling purchase orders in the OrderPool.
  */
-interface IFulfillmentVault is ILiquidityVault, IFulfillmentVaultEvents {
+interface IFulfillmentVault is ILiquidityVault, IFulfillmentVaultEvents, IFulfillmentVaultErrors {
   /**
    * @notice Gets the address of the wrapped native token
    * @return The address of the wrapped native token (i.e., whype: 0x555...)
