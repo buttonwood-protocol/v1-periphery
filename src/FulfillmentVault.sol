@@ -251,5 +251,10 @@ contract FulfillmentVault is LiquidityVault, IFulfillmentVault {
     // Emit event
     emit OrderFilled(index, hintPrevIds);
     IOrderPool(orderPool()).processOrders(indices, hintPrevIdsList);
+    // Send collected fees to the keeper by sending the native balance
+    (bool success,) = _msgSender().call{value: address(this).balance}("");
+    if (!success) {
+      revert FailedToWithdrawNativeGas(address(this).balance);
+    }
   }
 }

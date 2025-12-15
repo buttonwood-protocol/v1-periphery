@@ -185,10 +185,13 @@ contract RouterTest is BaseTest {
       vm.stopPrank();
     }
 
+    // Deal 0.01e18 of native tokens to the borrower
+    deal(address(borrower), 0.01e18);
+
     // Borrower calls requestMortgage (using usdt NOT usdx)
     vm.startPrank(borrower);
     (uint256 collateralCollected, uint256 usdxCollected, uint256 paymentAmount, uint8 collateralDecimals) =
-      router.requestMortgage{value: 0}(address(usdt), creationRequest, false, 2576e18); // Don't need to pay any fees yet
+      router.requestMortgage{value: 0.01e18}(address(usdt), creationRequest, false, 2576e18); // Don't need to pay any fees yet
     vm.stopPrank();
 
     // Calculate expectedPaymentAmount
@@ -254,15 +257,14 @@ contract RouterTest is BaseTest {
 
     // Calculate the amount of collateral to collect from the borrower
     (uint256 requiredCollateralCollected,,,) = router.calculateCollectedAmounts(creationRequest);
-    // Deel the required amount of HYPE to the user
-    vm.deal(borrower, requiredCollateralCollected);
-    whype.approve(address(router), requiredCollateralCollected);
+    // Deel the required amount of HYPE to the user (plus 0.01e18 for the gas fee)
+    vm.deal(borrower, requiredCollateralCollected + 0.01e18);
     vm.stopPrank();
 
     // Borrower calls requestMortgage (using usdt NOT usdx)
     vm.startPrank(borrower);
     (uint256 collateralCollected, uint256 usdxCollected, uint256 paymentAmount, uint8 collateralDecimals) =
-      router.requestMortgage{value: requiredCollateralCollected}(address(whype), creationRequest, true, 51e18); // Don't need to pay any fees yet
+      router.requestMortgage{value: requiredCollateralCollected + 0.01e18}(address(whype), creationRequest, true, 51e18); // Don't need to pay any fees yet
     vm.stopPrank();
 
     // Calculate expectedPaymentAmount

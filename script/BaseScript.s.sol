@@ -16,6 +16,7 @@ contract BaseScript is Script {
 
   function setUp() public virtual {
     deployerAddress = vm.envAddress("DEPLOYER_ADDRESS");
+    console.log("Deployer address: %s", deployerAddress);
     // deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
     isTest = vm.envBool("IS_TEST");
 

@@ -253,6 +253,11 @@ contract BaseTest is Test {
     orderPool.setMaximumOrderDuration(opMaximumOrderDuration);
     vm.stopPrank();
 
+    // Set the gas fee for the order pool
+    vm.startPrank(admin);
+    orderPool.setGasFee(0.01e18);
+    vm.stopPrank();
+
     // Set the order pool in the general manager
     vm.startPrank(admin);
     generalManager.setOrderPool(address(orderPool));
