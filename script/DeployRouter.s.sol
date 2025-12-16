@@ -20,6 +20,9 @@ contract DeployRouterScript is DeployFulfillmentVaultScript {
   }
 
   function deployRouter() public {
+    if (address(rolloverVault) == address(0)) {
+      revert("Rollover vault not deployed");
+    }
     router = new Router(wrappedNativeTokenAddress, generalManagerAddress, address(rolloverVault), pythAddress);
     router.approveCollaterals();
     router.approveUsdTokens();

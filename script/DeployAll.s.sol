@@ -12,9 +12,9 @@ contract DeployAllScript is DeployRouterScript {
 
   function run() public virtual override {
     vm.startBroadcast();
-    deployRouter();
     deployRolloverVault();
     deployFulfillmentVault();
+    deployRouter();
     logAddresses();
     vm.stopBroadcast();
   }
