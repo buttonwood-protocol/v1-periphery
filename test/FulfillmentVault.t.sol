@@ -15,199 +15,26 @@ import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol"
 import {IERC1822Proxiable} from "@openzeppelin/contracts/interfaces/draft-IERC1822.sol";
 import {ILiquidityVault} from "../src/interfaces/ILiquidityVault/ILiquidityVault.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
-import {CoreSimulatorLib} from "@hyper-evm-lib/test/simulation/CoreSimulatorLib.sol";
-import {PrecompileLib} from "@hyper-evm-lib/src/PrecompileLib.sol";
-import {HyperCore} from "@hyper-evm-lib/test/simulation/HyperCore.sol";
-import {TokenRegistry} from "@hyper-evm-lib/src/registry/TokenRegistry.sol";
-import {HLConversions} from "@hyper-evm-lib/src/common/HLConversions.sol";
-import {HLConstants} from "@hyper-evm-lib/src/common/HLConstants.sol";
 import {Router} from "../src/Router.sol";
 import {MockPriceOracle} from "./mocks/MockPriceOracle.sol";
 import {CreationRequest, BaseRequest} from "@core/types/orders/OrderRequests.sol";
+import {CoreSimulatorLib} from "@hyper-evm-lib/test/simulation/CoreSimulatorLib.sol";
+import {HLConversions} from "@hyper-evm-lib/src/common/HLConversions.sol";
+import {PrecompileLib} from "@hyper-evm-lib/src/PrecompileLib.sol";
 
 contract FulfillmentVaultTest is BaseTest {
-  HyperCore public hyperCore;
-
-  using PrecompileLib for address;
-
-  string NAME = "Test Fulfillment Vault";
-  string SYMBOL = "tFT";
-  uint8 DECIMALS = 26; // ToDo: Make this 8 + usdx decimals????
-  uint8 DECIMALS_OFFSET = 8;
-
-  // Hyper-EVM-Lib Values
-  TokenRegistry public tokenRegistry;
-  address public HYPER_CORE_ADDRESS = 0x9999999999999999999999999999999999999999;
-  address TOKEN_INFO_PRECOMPILE_ADDRESS = 0x000000000000000000000000000000000000080C;
-  address SPOT_INFO_PRECOMPILE_ADDRESS = 0x000000000000000000000000000000000000080b;
-  address SPOT_PX_PRECOMPILE_ADDRESS = 0x0000000000000000000000000000000000000808;
-  address public TOKEN_REGISTRY_ADDRESS = 0x0b51d1A9098cf8a72C325003F44C194D41d7A85B;
-  address public UBTC_SYSTEM_ADDRESS = 0x20000000000000000000000000000000000000c5;
-  uint32 public HYPE_TOKEN_INDEX = uint32(HLConstants.hypeTokenIndex());
-  uint32 public USDC_TOKEN_INDEX = 0;
-  uint32 public USDT_TOKEN_INDEX = 268;
-  uint32 public USDH_TOKEN_INDEX = 360;
-  uint32 public UBTC_TOKEN_INDEX = 197;
-
-  FulfillmentVault public fulfillmentVault;
-
-  function mockTokenInfo(
-    uint32 tokenIndex,
-    address evmContract,
-    string memory name,
-    uint8 szDecimals,
-    uint8 weiDecimals,
-    int8 evmExtraWeiDecimals
-  ) internal {
-    PrecompileLib.TokenInfo memory info = PrecompileLib.TokenInfo({
-      name: name,
-      spots: new uint64[](0),
-      deployerTradingFeeShare: 0,
-      deployer: address(0),
-      evmContract: evmContract,
-      szDecimals: szDecimals,
-      weiDecimals: weiDecimals,
-      evmExtraWeiDecimals: evmExtraWeiDecimals
-    });
-
-    vm.mockCall(TOKEN_INFO_PRECOMPILE_ADDRESS, abi.encode(tokenIndex), abi.encode(info));
-    if (tokenIndex != HYPE_TOKEN_INDEX && tokenIndex != USDC_TOKEN_INDEX) {
-      tokenRegistry.setTokenInfo(tokenIndex);
-    }
-  }
-
-  function mockSpotInfo(uint32 spotIndex, string memory name, uint64[2] memory tokens) internal {
-    PrecompileLib.SpotInfo memory info = PrecompileLib.SpotInfo({name: name, tokens: tokens});
-    vm.mockCall(SPOT_INFO_PRECOMPILE_ADDRESS, abi.encode(spotIndex), abi.encode(info));
-  }
-
-  function mockSpotPx(uint32 spotIndex, uint64 px) internal {
-    vm.mockCall(SPOT_PX_PRECOMPILE_ADDRESS, abi.encode(spotIndex), abi.encode(px));
-  }
-
-  function setupHyperCore() internal {
-    hyperCore = new HyperCore();
-    vm.etch(HYPER_CORE_ADDRESS, address(hyperCore).code);
-    vm.label(HYPER_CORE_ADDRESS, "HyperCore");
-    hyperCore = CoreSimulatorLib.init();
-    hyperCore.setUseRealL1Read(false);
-  }
-
-  function setupTokenRegistry() internal {
-    tokenRegistry = new TokenRegistry();
-    vm.etch(TOKEN_REGISTRY_ADDRESS, address(tokenRegistry).code);
-    vm.label(TOKEN_REGISTRY_ADDRESS, "TokenRegistry");
-    tokenRegistry = TokenRegistry(TOKEN_REGISTRY_ADDRESS);
-    mockTokenInfo(USDT_TOKEN_INDEX, address(usdt), "USDT", 2, 8, -2);
-    mockTokenInfo(USDH_TOKEN_INDEX, address(usdh), "USDH", 2, 8, -2);
-    mockTokenInfo(HYPE_TOKEN_INDEX, address(0), "HYPE", 2, 8, 0);
-    mockTokenInfo(USDC_TOKEN_INDEX, address(0), "USDC", 8, 8, 0);
-    mockTokenInfo(UBTC_TOKEN_INDEX, address(ubtc), "UBTC", 5, 10, -2);
-  }
-
-  function setupSpotInfo() internal {
-    uint64[2] memory tokens = [uint64(USDT_TOKEN_INDEX), uint64(USDC_TOKEN_INDEX)];
-    mockSpotInfo(USDT_TOKEN_INDEX, "@166", tokens);
-    tokens = [uint64(USDH_TOKEN_INDEX), uint64(USDC_TOKEN_INDEX)];
-    mockSpotInfo(USDH_TOKEN_INDEX, "@230", tokens);
-    tokens = [uint64(HYPE_TOKEN_INDEX), uint64(USDC_TOKEN_INDEX)];
-    mockSpotInfo(HYPE_TOKEN_INDEX, "@107", tokens);
-    tokens = [uint64(UBTC_TOKEN_INDEX), uint64(USDC_TOKEN_INDEX)];
-    mockSpotInfo(UBTC_TOKEN_INDEX, "@142", tokens);
-  }
-
-  function primeFulfillmentVault() public {
-    // Mint 0.5 PRIME_AMOUNT of usdt0 and usdh to the admin
-    vm.startPrank(admin);
-    uint256 usdtAmount = usdx.convertUnderlying(address(usdt), PRIME_AMOUNT / 2);
-    uint256 usdhAmount = usdx.convertUnderlying(address(usdh), PRIME_AMOUNT / 2);
-    deal(address(usdt), admin, usdtAmount);
-    deal(address(usdh), admin, usdhAmount);
-    vm.stopPrank();
-
-    // Admin primes the fulfillmentVault with PRIME_AMOUNT of usdx
-    vm.startPrank(admin);
-    usdt.approve(address(usdx), usdtAmount);
-    usdh.approve(address(usdx), usdhAmount);
-    usdx.deposit(address(usdt), usdtAmount);
-    usdx.deposit(address(usdh), usdhAmount);
-    usdx.approve(address(fulfillmentVault), PRIME_AMOUNT);
-    fulfillmentVault.deposit(address(usdx), PRIME_AMOUNT);
-    vm.stopPrank();
-
-    // Transfer the fulfillmentVault balance to the fulfillmentVault itself
-    vm.startPrank(admin);
-    fulfillmentVault.transfer(address(fulfillmentVault), fulfillmentVault.balanceOf(admin));
-    vm.stopPrank();
-  }
-
   function setUp() public {
-    // Initialize the HyperCore simulator
-    // vm.createSelectFork(vm.rpcUrl("hyperliquid"), 17133085);
-    setupHyperCore();
-
-    // Setup core
-    setUpCore();
-
-    // Setup the mock token registry
-    setupTokenRegistry();
-
-    // Setup the mock spot info
-    setupSpotInfo();
-
-    // Deploy the fulfillmentVault
-    FulfillmentVault fulfillmentVaultImplementation = new FulfillmentVault();
-    bytes memory initializerData = abi.encodeWithSelector(
-      FulfillmentVault.initialize.selector,
-      NAME,
-      SYMBOL,
-      DECIMALS,
-      DECIMALS_OFFSET,
-      address(whype),
-      address(generalManager),
-      address(admin)
-    );
-    ERC1967Proxy proxy = new ERC1967Proxy(address(fulfillmentVaultImplementation), initializerData);
-    fulfillmentVault = FulfillmentVault(payable(address(proxy)));
-
-    // Prime the fulfillmentVault
-    primeFulfillmentVault();
-
-    // Grant the keeper the KEEPER_ROLE
-    vm.startPrank(admin);
-    fulfillmentVault.grantRole(fulfillmentVault.KEEPER_ROLE(), keeper);
-    vm.stopPrank();
-
-    // Force the fulfillmentVault to be activated on hypercore
-    vm.mockCall(
-      HLConstants.CORE_USER_EXISTS_PRECOMPILE_ADDRESS, abi.encode(address(fulfillmentVault)), abi.encode(true)
-    );
-    CoreSimulatorLib.forceAccountActivation(address(fulfillmentVault));
-
-    // Force activate the HYPE system address so bridging works
-    vm.mockCall(
-      HLConstants.CORE_USER_EXISTS_PRECOMPILE_ADDRESS, abi.encode(HLConstants.HYPE_SYSTEM_ADDRESS), abi.encode(true)
-    );
-    CoreSimulatorLib.forceAccountActivation(HLConstants.HYPE_SYSTEM_ADDRESS);
-
-    // Force activate the UBTC system address so bridging works
-    vm.mockCall(HLConstants.CORE_USER_EXISTS_PRECOMPILE_ADDRESS, abi.encode(UBTC_SYSTEM_ADDRESS), abi.encode(true));
-    CoreSimulatorLib.forceAccountActivation(UBTC_SYSTEM_ADDRESS);
-
-    // Grant the fulfillmentVault the orderPool's FULFILLMENT_VAULT_ROLE
-    vm.startPrank(admin);
-    IAccessControl(address(orderPool)).grantRole(Roles.FULFILLMENT_ROLE, address(fulfillmentVault));
-    vm.stopPrank();
+    setUpFulfillmentVault();
   }
 
   function test_initialize() public {
     CoreSimulatorLib.forceSpotBalance(address(fulfillmentVault), USDT_TOKEN_INDEX, 0);
-    assertEq(fulfillmentVault.name(), NAME);
-    assertEq(fulfillmentVault.symbol(), SYMBOL);
-    assertEq(fulfillmentVault.decimals(), DECIMALS);
-    assertEq(fulfillmentVault.decimalsOffset(), DECIMALS_OFFSET);
+    assertEq(fulfillmentVault.name(), FULFILLMENT_VAULT_NAME);
+    assertEq(fulfillmentVault.symbol(), FULFILLMENT_VAULT_SYMBOL);
+    assertEq(fulfillmentVault.decimals(), FULFILLMENT_VAULT_DECIMALS);
+    assertEq(fulfillmentVault.decimalsOffset(), FULFILLMENT_VAULT_DECIMALS_OFFSET);
     assertEq(fulfillmentVault.totalAssets(), PRIME_AMOUNT);
-    assertEq(fulfillmentVault.totalSupply(), PRIME_AMOUNT * (10 ** DECIMALS_OFFSET));
+    assertEq(fulfillmentVault.totalSupply(), PRIME_AMOUNT * (10 ** FULFILLMENT_VAULT_DECIMALS_OFFSET));
     assertEq(fulfillmentVault.depositableAssets()[0], address(usdx));
     assertEq(fulfillmentVault.redeemableAssets()[0], address(usdx));
     assertEq(fulfillmentVault.wrappedNativeToken(), address(whype));
@@ -824,7 +651,9 @@ contract FulfillmentVaultTest is BaseTest {
 
   function test_fillOrder_completeFlow() public {
     // Deploying a new router
-    Router router = new Router(address(whype), address(generalManager), address(rolloverVault), address(pyth));
+    Router router = new Router(
+      address(whype), address(generalManager), address(rolloverVault), address(fulfillmentVault), address(pyth)
+    );
     // Run the approve functions on the router
     router.approveCollaterals();
     router.approveUsdTokens();

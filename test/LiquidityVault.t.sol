@@ -18,8 +18,8 @@ import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/Pau
 contract LiquidityVaultTest is Test {
   string NAME = "Test Liquidity Vault";
   string SYMBOL = "TLV";
-  uint8 DECIMALS = 26; // ToDo: Make this 8 + depositableAsset decimals????
-  uint8 DECIMALS_OFFSET = 8;
+  uint8 DECIMALS = 24;
+  uint8 DECIMALS_OFFSET = 6;
   IERC20 depositableAsset;
   IERC20 redeemableAsset;
 

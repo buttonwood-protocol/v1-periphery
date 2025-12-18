@@ -28,7 +28,7 @@ import {IPyth} from "@pythnetwork/IPyth.sol";
 import {PythErrors} from "@pythnetwork/PythErrors.sol";
 import {MortgageMath} from "@core/libraries/MortgageMath.sol";
 import {MortgagePosition} from "@core/types/MortgagePosition.sol";
-import {IRolloverVault} from "./interfaces/IRolloverVault/IRolloverVault.sol";
+import {ILiquidityVault} from "./interfaces/ILiquidityVault/ILiquidityVault.sol";
 
 /**
  * @title Router
@@ -53,6 +53,8 @@ contract Router is
   /// @inheritdoc IRouter
   address public immutable rolloverVault;
   /// @inheritdoc IRouter
+  address public immutable fulfillmentVault;
+  /// @inheritdoc IRouter
   address public immutable pyth;
   /// @inheritdoc IRouter
   address public immutable wrappedNativeToken;
@@ -67,12 +69,20 @@ contract Router is
    * @param _wrappedNativeToken The address of the wrapped native token (i.e., whype: 0x555...)
    * @param _generalManager The address of the general manager contract
    * @param _rolloverVault The address of the rollover vault contract
+   * @param _fulfillmentVault The address of the fulfillment vault contract
    * @param _pyth The address of the Pyth contract
    */
-  constructor(address _wrappedNativeToken, address _generalManager, address _rolloverVault, address _pyth) {
+  constructor(
+    address _wrappedNativeToken,
+    address _generalManager,
+    address _rolloverVault,
+    address _fulfillmentVault,
+    address _pyth
+  ) {
     wrappedNativeToken = _wrappedNativeToken;
     generalManager = _generalManager;
     rolloverVault = _rolloverVault;
+    fulfillmentVault = _fulfillmentVault;
     pyth = _pyth;
     usdx = IGeneralManager(_generalManager).usdx();
     consol = IGeneralManager(_generalManager).consol();
@@ -450,9 +460,12 @@ contract Router is
   }
 
   /**
-   * @inheritdoc IRouter
+   * @dev Internal function to deposit into a liquidity vault
+   * @param vault The address of the liquidity vault to deposit into
+   * @param usdToken The address of the usdToken to pull in
+   * @param usdTokenAmount The amount of usdToken to pull in
    */
-  function rolloverVaultDeposit(address usdToken, uint256 usdTokenAmount) external {
+  function _vaultDeposit(address vault, address usdToken, uint256 usdTokenAmount) internal {
     // Convert the usdTokenAmount to USDX
     uint256 usdxAmount = convert(usdToken, usdx, usdTokenAmount);
 
@@ -460,10 +473,24 @@ contract Router is
     _pullUsdToken(usdToken, usdxAmount);
 
     // Deposit the USDX into the rollover vault
-    IUSDX(usdx).approve(rolloverVault, usdxAmount);
-    IRolloverVault(rolloverVault).deposit(usdx, usdxAmount);
+    IUSDX(usdx).approve(vault, usdxAmount);
+    ILiquidityVault(vault).deposit(usdx, usdxAmount);
 
-    // Transfer the rollover vault share tokens to the user
-    IRolloverVault(rolloverVault).transfer(msg.sender, IRolloverVault(rolloverVault).balanceOf(address(this)));
+    // Transfer the vault share tokens to the user
+    ILiquidityVault(vault).transfer(msg.sender, ILiquidityVault(vault).balanceOf(address(this)));
+  }
+
+  /**
+   * @inheritdoc IRouter
+   */
+  function rolloverVaultDeposit(address usdToken, uint256 usdTokenAmount) external {
+    _vaultDeposit(rolloverVault, usdToken, usdTokenAmount);
+  }
+
+  /**
+   * @inheritdoc IRouter
+   */
+  function fulfillmentVaultDeposit(address usdToken, uint256 usdTokenAmount) external {
+    _vaultDeposit(fulfillmentVault, usdToken, usdTokenAmount);
   }
 }

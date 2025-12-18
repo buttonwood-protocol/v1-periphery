@@ -47,20 +47,14 @@ contract RouterTest is BaseTest {
   // Router
   Router public router;
 
-  // ToDo: RolloverVault Address
-  // ToDo: RolloverVault Address
-  // ToDo: RolloverVault Address
-  // ToDo: RolloverVault Address
-  // ToDo: RolloverVault Address
-  // ToDo: RolloverVault Address
-  address public rolloverVaultAddress;
-
   function setUp() public {
     // Setting up the core contracts
     setUpCore();
 
     // Deploy the router
-    router = new Router(address(whype), address(generalManager), rolloverVaultAddress, address(pyth));
+    router = new Router(
+      address(whype), address(generalManager), address(rolloverVault), address(fulfillmentVault), address(pyth)
+    );
 
     // Run the approve functions on the router
     router.approveCollaterals();
@@ -69,6 +63,8 @@ contract RouterTest is BaseTest {
 
   function test_constructor() public view override {
     assertEq(address(router.generalManager()), address(generalManager), "General Manager address is incorrect");
+    assertEq(address(router.rolloverVault()), address(rolloverVault), "Rollover vault address is incorrect");
+    assertEq(address(router.fulfillmentVault()), address(fulfillmentVault), "Fulfillment vault address is incorrect");
     assertEq(address(router.wrappedNativeToken()), address(whype), "Wrapped native token address is incorrect");
     assertEq(address(router.usdx()), generalManager.usdx(), "USDX address is incorrect");
     assertEq(address(router.consol()), generalManager.consol(), "Consol address is incorrect");
@@ -91,7 +87,9 @@ contract RouterTest is BaseTest {
 
   function test_approveCollaterals() public {
     // Making a new router just for this test
-    router = new Router(address(whype), address(generalManager), address(rolloverVault), address(pyth));
+    router = new Router(
+      address(whype), address(generalManager), address(rolloverVault), address(fulfillmentVault), address(pyth)
+    );
     // The WHYPE is already approved because it's the wrappedNativeToken in the constructor
     // So let's verify it's already approved
     assertEq(
@@ -115,7 +113,9 @@ contract RouterTest is BaseTest {
 
   function test_approveUsdTokens() public {
     // Making a new router just for this test
-    router = new Router(address(whype), address(generalManager), address(rolloverVault), address(pyth));
+    router = new Router(
+      address(whype), address(generalManager), address(rolloverVault), address(fulfillmentVault), address(pyth)
+    );
 
     // Check initial state - router should not have approvals for USD tokens yet
     assertEq(usdt.allowance(address(router), address(usdx)), 0, "USDT should not be approved initially");
