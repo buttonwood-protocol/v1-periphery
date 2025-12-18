@@ -24,6 +24,12 @@ interface IRouter is IRouterErrors {
   function rolloverVault() external view returns (address);
 
   /**
+   * @notice The address of the fulfillment vault contract
+   * @return The address of the fulfillment vault contract
+   */
+  function fulfillmentVault() external view returns (address);
+
+  /**
    * @notice The address of the Pyth contract
    * @return The address of the Pyth contract
    */
@@ -178,4 +184,11 @@ interface IRouter is IRouterErrors {
    * @param usdTokenAmount The amount of usdToken to pull in
    */
   function rolloverVaultDeposit(address usdToken, uint256 usdTokenAmount) external;
+
+  /**
+   * @notice Deposit into the fulfillment vault
+   * @param usdToken The address of the usdToken to pull in
+   * @param usdTokenAmount The amount of usdToken to pull in
+   */
+  function fulfillmentVaultDeposit(address usdToken, uint256 usdTokenAmount) external;
 }
