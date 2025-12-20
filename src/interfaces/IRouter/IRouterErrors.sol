@@ -14,4 +14,11 @@ interface IRouterErrors {
    * @param maxColllected The maximum amount that can be collected
    */
   error CollectedAmountExceedsMaximum(address token, uint256 collectedAmount, uint256 maxColllected);
+
+  /**
+   * @notice Thrown when the vault's whitelist is enforced and the sender is not whitelisted
+   * @param vault The address of the vault
+   * @param sender The address of the sender
+   */
+  error VaultWhitelistEnforced(address vault, address sender);
 }
