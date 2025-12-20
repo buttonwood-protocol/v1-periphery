@@ -29,6 +29,7 @@ import {PythErrors} from "@pythnetwork/PythErrors.sol";
 import {MortgageMath} from "@core/libraries/MortgageMath.sol";
 import {MortgagePosition} from "@core/types/MortgagePosition.sol";
 import {ILiquidityVault} from "./interfaces/ILiquidityVault/ILiquidityVault.sol";
+import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 
 /**
  * @title Router
@@ -466,18 +467,25 @@ contract Router is
    * @param usdTokenAmount The amount of usdToken to pull in
    */
   function _vaultDeposit(address vault, address usdToken, uint256 usdTokenAmount) internal {
+    if (
+      ILiquidityVault(vault).whitelistEnforced()
+        && !IAccessControl(vault).hasRole(ILiquidityVault(vault).WHITELIST_ROLE(), _msgSender())
+    ) {
+      revert VaultWhitelistEnforced(vault, _msgSender());
+    }
+
     // Convert the usdTokenAmount to USDX
     uint256 usdxAmount = convert(usdToken, usdx, usdTokenAmount);
 
     // Pull in the usdToken from the user
     _pullUsdToken(usdToken, usdxAmount);
 
-    // Deposit the USDX into the rollover vault
+    // Deposit the USDX into the vault
     IUSDX(usdx).approve(vault, usdxAmount);
     ILiquidityVault(vault).deposit(usdx, usdxAmount);
 
     // Transfer the vault share tokens to the user
-    ILiquidityVault(vault).transfer(msg.sender, ILiquidityVault(vault).balanceOf(address(this)));
+    ILiquidityVault(vault).transfer(_msgSender(), ILiquidityVault(vault).balanceOf(address(this)));
   }
 
   /**
