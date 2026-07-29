@@ -95,8 +95,8 @@ interface IFulfillmentVault is ILiquidityVault, IFulfillmentVaultEvents, IFulfil
    * @notice Trades tokens on core
    * @param spotId The spotId of the asset to trade (identifies the trading pair)
    * @param isBuy Whether to buy or sell
-   * @param limitPx The limit price. Note, This is is (weiUnits - szUnits). For USDT and USDH, weiUnits is 1e6.
-   * @param sz The size of the trade. Note, this is in szUnits. For USDT and USDH, szUnits is 1e2.
+   * @param limitPx The limit price. Note, This is is (weiUnits - szUnits). For USDT0 and USDC, weiUnits is 1e6.
+   * @param sz The size of the trade. Note, this is in szUnits. For USDT0 and USDC, szUnits is 1e2.
    */
   function tradeOnCore(uint32 spotId, bool isBuy, uint64 limitPx, uint64 sz) external;
 
