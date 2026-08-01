@@ -302,7 +302,7 @@ contract FulfillmentVaultTest is BaseTest {
     // Validate that the user's shares have not changed
     assertEq(fulfillmentVault.balanceOf(user), fBalance, "User should have the same balance in the fulfillmentVault");
 
-    // Validate that the fulfillmentVault is now holding usdt (dust amount of usdh is omitted because it can get rounded down to 0)
+    // Validate that the fulfillmentVault is now holding usdt (dust amount of usdc is omitted because it can get rounded down to 0)
     assertGt(usdt.balanceOf(address(fulfillmentVault)), 0, "FulfillmentVault should be holding usdt");
   }
 
@@ -510,7 +510,7 @@ contract FulfillmentVaultTest is BaseTest {
     fulfillmentVault.burnUsdx(usdxAmount);
     vm.stopPrank();
 
-    // Collect the usdt balance of the fulfillmentVault (won't equal $5 because some of the burnt usdx will be converted to usdh)
+    // Collect the usdt balance of the fulfillmentVault (won't equal $5 because some of the burnt usdx will be converted to usdc)
     uint256 usdtBalance = usdt.balanceOf(address(fulfillmentVault));
 
     // Keeper calls bridgeAssetFromEvmToCore() with token and amount

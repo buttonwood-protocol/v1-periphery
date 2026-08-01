@@ -65,12 +65,11 @@ contract BaseTest is Test {
 
   // Mainnet Addresses
   address public USDT0_ADDRESS = 0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb;
-  address public USDH0_ADDRESS = 0x111111a1a0667d36bD57c0A9f569b98057111111;
   address public UBTC_ADDRESS = 0x9FDBdA0A5e284c32744D2f17Ee5c74B284993463;
 
   // Tokens
   IERC20 public usdt;
-  IERC20 public usdh;
+  IERC20 public usdc;
   IUSDX public usdx;
   ForfeitedAssetsPool public forfeitedAssetsPool;
   IConsol public consol;
@@ -132,7 +131,6 @@ contract BaseTest is Test {
   uint32 public HYPE_TOKEN_INDEX = uint32(HLConstants.hypeTokenIndex());
   uint32 public USDC_TOKEN_INDEX = 0;
   uint32 public USDT_TOKEN_INDEX = 268;
-  uint32 public USDH_TOKEN_INDEX = 360;
   uint32 public UBTC_TOKEN_INDEX = 197;
   // FulfillmentVault Args
   FulfillmentVault public fulfillmentVault;
@@ -218,16 +216,16 @@ contract BaseTest is Test {
     // Make usdt
     usdt = new MockERC20("USDT", "USDT", 18);
     vm.label(address(usdt), "USDT");
-    // Make usdh
-    usdh = new MockERC20("USDH", "USDH", 18);
-    vm.label(address(usdh), "USDH");
+    // Make usdc
+    usdc = new MockERC20("USDC", "USDC", 18);
+    vm.label(address(usdc), "USDC");
     // Make usdx
     usdx = new USDX("USDX", "USDX", 18, admin);
-    // Add usdt and usdh to usdx
+    // Add usdt and usdc to usdx
     vm.startPrank(admin);
     IAccessControl(address(usdx)).grantRole(Roles.SUPPORTED_TOKEN_ROLE, admin);
     USDX(address(usdx)).addSupportedToken(address(usdt), 1e12, 1);
-    USDX(address(usdx)).addSupportedToken(address(usdh), 1e12, 1);
+    USDX(address(usdx)).addSupportedToken(address(usdc), 1e12, 1);
     vm.stopPrank();
   }
 
@@ -409,20 +407,20 @@ contract BaseTest is Test {
   }
 
   function primeRolloverVault() public {
-    // Mint 0.5 PRIME_AMOUNT of usdt0 and usdh to the admin
+    // Mint 0.5 PRIME_AMOUNT of usdt0 and usdc to the admin
     vm.startPrank(admin);
     uint256 usdtAmount = usdx.convertUnderlying(address(usdt), PRIME_AMOUNT / 2);
-    uint256 usdhAmount = usdx.convertUnderlying(address(usdh), PRIME_AMOUNT / 2);
+    uint256 usdcAmount = usdx.convertUnderlying(address(usdc), PRIME_AMOUNT / 2);
     deal(address(usdt), admin, usdtAmount);
-    deal(address(usdh), admin, usdhAmount);
+    deal(address(usdc), admin, usdcAmount);
     vm.stopPrank();
 
     // Admin primes the rolloverVault with PRIME_AMOUNT of usdx
     vm.startPrank(admin);
     usdt.approve(address(usdx), usdtAmount);
-    usdh.approve(address(usdx), usdhAmount);
+    usdc.approve(address(usdx), usdcAmount);
     usdx.deposit(address(usdt), usdtAmount);
-    usdx.deposit(address(usdh), usdhAmount);
+    usdx.deposit(address(usdc), usdcAmount);
     usdx.approve(address(rolloverVault), PRIME_AMOUNT);
     rolloverVault.deposit(address(usdx), PRIME_AMOUNT);
     vm.stopPrank();
@@ -505,7 +503,6 @@ contract BaseTest is Test {
     vm.label(TOKEN_REGISTRY_ADDRESS, "TokenRegistry");
     tokenRegistry = TokenRegistry(TOKEN_REGISTRY_ADDRESS);
     mockTokenInfo(USDT_TOKEN_INDEX, address(usdt), "USDT", 2, 8, -2);
-    mockTokenInfo(USDH_TOKEN_INDEX, address(usdh), "USDH", 2, 8, -2);
     mockTokenInfo(HYPE_TOKEN_INDEX, address(0), "HYPE", 2, 8, 0);
     mockTokenInfo(USDC_TOKEN_INDEX, address(0), "USDC", 8, 8, 0);
     mockTokenInfo(UBTC_TOKEN_INDEX, address(ubtc), "UBTC", 5, 10, -2);
@@ -514,8 +511,6 @@ contract BaseTest is Test {
   function setupSpotInfo() internal {
     uint64[2] memory tokens = [uint64(USDT_TOKEN_INDEX), uint64(USDC_TOKEN_INDEX)];
     mockSpotInfo(USDT_TOKEN_INDEX, "@166", tokens);
-    tokens = [uint64(USDH_TOKEN_INDEX), uint64(USDC_TOKEN_INDEX)];
-    mockSpotInfo(USDH_TOKEN_INDEX, "@230", tokens);
     tokens = [uint64(HYPE_TOKEN_INDEX), uint64(USDC_TOKEN_INDEX)];
     mockSpotInfo(HYPE_TOKEN_INDEX, "@107", tokens);
     tokens = [uint64(UBTC_TOKEN_INDEX), uint64(USDC_TOKEN_INDEX)];
@@ -523,20 +518,20 @@ contract BaseTest is Test {
   }
 
   function primeFulfillmentVault() public {
-    // Mint 0.5 PRIME_AMOUNT of usdt0 and usdh to the admin
+    // Mint 0.5 PRIME_AMOUNT of usdt0 and usdc to the admin
     vm.startPrank(admin);
     uint256 usdtAmount = usdx.convertUnderlying(address(usdt), PRIME_AMOUNT / 2);
-    uint256 usdhAmount = usdx.convertUnderlying(address(usdh), PRIME_AMOUNT / 2);
+    uint256 usdcAmount = usdx.convertUnderlying(address(usdc), PRIME_AMOUNT / 2);
     deal(address(usdt), admin, usdtAmount);
-    deal(address(usdh), admin, usdhAmount);
+    deal(address(usdc), admin, usdcAmount);
     vm.stopPrank();
 
     // Admin primes the fulfillmentVault with PRIME_AMOUNT of usdx
     vm.startPrank(admin);
     usdt.approve(address(usdx), usdtAmount);
-    usdh.approve(address(usdx), usdhAmount);
+    usdc.approve(address(usdx), usdcAmount);
     usdx.deposit(address(usdt), usdtAmount);
-    usdx.deposit(address(usdh), usdhAmount);
+    usdx.deposit(address(usdc), usdcAmount);
     usdx.approve(address(fulfillmentVault), PRIME_AMOUNT);
     fulfillmentVault.deposit(address(usdx), PRIME_AMOUNT);
     vm.stopPrank();
