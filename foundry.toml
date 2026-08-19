@@ -22,9 +22,11 @@ fs_permissions = [
   { access = "read", path = "../contracts/addresses/addresses-31337.json"},
   { access = "read", path = "../contracts/addresses/addresses-998.json"},
   { access = "read", path = "../contracts/addresses/addresses-999.json"},
+  { access = "read", path = "../contracts/addresses/addresses-46630.json"},
   { access = "read-write", path = "./addresses/addresses-31337.json"},
   { access = "read-write", path = "./addresses/addresses-998.json"},
   { access = "read-write", path = "./addresses/addresses-999.json"},
+  { access = "read-write", path = "./addresses/addresses-46630.json"},
   { access = "read", path = "./test/artifacts/WHYPE9.json"}
 ]
 
@@ -45,6 +47,7 @@ tab_width = 2
 [rpc_endpoints]
   hyperliquid = "${HYPERLIQUID_MAINNET_RPC_URL}"
   hyperliquid-testnet = "${HYPERLIQUID_TESTNET_RPC_URL}"
+  robinhood-testnet = "https://rpc.testnet.chain.robinhood.com"
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
 
