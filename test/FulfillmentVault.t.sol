@@ -652,7 +652,7 @@ contract FulfillmentVaultTest is BaseTest {
   function test_fillOrder_completeFlow() public {
     // Deploying a new router
     Router router = new Router(
-      address(whype), address(generalManager), address(rolloverVault), address(fulfillmentVault), address(pyth)
+      address(whype), address(generalManager), address(rolloverVault), address(fulfillmentVault), address(simpleOracle)
     );
     // Run the approve functions on the router
     router.approveCollaterals();

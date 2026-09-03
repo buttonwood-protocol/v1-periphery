@@ -21,4 +21,9 @@ interface IRouterErrors {
    * @param sender The address of the sender
    */
   error VaultWhitelistEnforced(address vault, address sender);
+
+  /**
+   * @notice Thrown when a price push is requested but the router has no SimpleOracle configured
+   */
+  error SimpleOracleNotSet();
 }

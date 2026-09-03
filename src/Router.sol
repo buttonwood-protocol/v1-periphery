@@ -14,6 +14,7 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IUSDX} from "@core/interfaces/IUSDX/IUSDX.sol";
 import {CreationRequest} from "@core/types/orders/OrderRequests.sol";
 import {IWNT} from "./interfaces/IWNT.sol";
+import {ISimpleOracle} from "./interfaces/ISimpleOracle.sol";
 import {OPoolConfigId} from "@core/types/OPoolConfigId.sol";
 import {
   IOriginationPoolScheduler,
@@ -24,8 +25,6 @@ import {IMortgageNFT} from "@core/interfaces/IMortgageNFT/IMortgageNFT.sol";
 import {IMortgageNFTErrors} from "@core/interfaces/IMortgageNFT/IMortgageNFTErrors.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {IPyth} from "@pythnetwork/IPyth.sol";
-import {PythErrors} from "@pythnetwork/PythErrors.sol";
 import {MortgageMath} from "@core/libraries/MortgageMath.sol";
 import {MortgagePosition} from "@core/types/MortgagePosition.sol";
 import {ILiquidityVault} from "./interfaces/ILiquidityVault/ILiquidityVault.sol";
@@ -47,7 +46,6 @@ contract Router is
 {
   using SafeERC20 for IERC20;
   using MortgageMath for MortgagePosition;
-  using PythErrors for IPyth;
 
   /// @inheritdoc IRouter
   address public immutable generalManager;
@@ -56,7 +54,7 @@ contract Router is
   /// @inheritdoc IRouter
   address public immutable fulfillmentVault;
   /// @inheritdoc IRouter
-  address public immutable pyth;
+  address public immutable simpleOracle;
   /// @inheritdoc IRouter
   address public immutable wrappedNativeToken;
   /// @inheritdoc IRouter
@@ -71,20 +69,20 @@ contract Router is
    * @param _generalManager The address of the general manager contract
    * @param _rolloverVault The address of the rollover vault contract
    * @param _fulfillmentVault The address of the fulfillment vault contract
-   * @param _pyth The address of the Pyth contract
+   * @param _simpleOracle The address of the SimpleOracle contract, or zero on chains whose oracles are read on-chain
    */
   constructor(
     address _wrappedNativeToken,
     address _generalManager,
     address _rolloverVault,
     address _fulfillmentVault,
-    address _pyth
+    address _simpleOracle
   ) {
     wrappedNativeToken = _wrappedNativeToken;
     generalManager = _generalManager;
     rolloverVault = _rolloverVault;
     fulfillmentVault = _fulfillmentVault;
-    pyth = _pyth;
+    simpleOracle = _simpleOracle;
     usdx = IGeneralManager(_generalManager).usdx();
     consol = IGeneralManager(_generalManager).consol();
     originationPoolScheduler = IGeneralManager(_generalManager).originationPoolScheduler();
@@ -243,7 +241,7 @@ contract Router is
   /**
    * @inheritdoc IRouter
    */
-  function updatePriceFeedsAndRequestMortgage(
+  function updatePricesAndRequestMortgage(
     bytes[] calldata priceUpdates,
     address usdToken,
     CreationRequest calldata creationRequest,
@@ -254,11 +252,12 @@ contract Router is
     payable
     returns (uint256 collateralCollected, uint256 usdxCollected, uint256 paymentAmount, uint8 collateralDecimals)
   {
-    // Fetch the update fees
-    uint256 updateFee = IPyth(pyth).getUpdateFee(priceUpdates);
+    if (simpleOracle == address(0)) {
+      revert SimpleOracleNotSet();
+    }
 
-    // Fetch the Pyth contract
-    IPyth(pyth).updatePriceFeeds{value: updateFee}(priceUpdates);
+    // Push the signed prices so the oracles are fresh for this request (no fee is charged)
+    ISimpleOracle(simpleOracle).updatePrices(priceUpdates);
 
     return requestMortgage(usdToken, creationRequest, isNative, maxCollected);
   }

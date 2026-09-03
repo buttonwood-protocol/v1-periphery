@@ -33,7 +33,11 @@ contract DeployRouterScript is DeployFulfillmentVaultScript {
       revert("Fulfillment vault not deployed");
     }
     router = new Router(
-      wrappedNativeTokenAddress, generalManagerAddress, address(rolloverVault), address(fulfillmentVault), pythAddress
+      wrappedNativeTokenAddress,
+      generalManagerAddress,
+      address(rolloverVault),
+      address(fulfillmentVault),
+      simpleOracleAddress
     );
     router.approveCollaterals();
     router.approveUsdTokens();
