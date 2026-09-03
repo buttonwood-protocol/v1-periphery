@@ -30,10 +30,10 @@ interface IRouter is IRouterErrors {
   function fulfillmentVault() external view returns (address);
 
   /**
-   * @notice The address of the CopyOracle contract (zero on chains whose oracles are read on-chain)
-   * @return The address of the CopyOracle contract
+   * @notice The address of the SimpleOracle contract (zero on chains whose oracles are read on-chain)
+   * @return The address of the SimpleOracle contract
    */
-  function copyOracle() external view returns (address);
+  function simpleOracle() external view returns (address);
 
   /**
    * @notice The address of the wrapped native token
@@ -104,8 +104,8 @@ interface IRouter is IRouterErrors {
     returns (uint256 collateralCollected, uint256 usdxCollected, uint256 paymentAmount, uint8 collateralDecimals);
 
   /**
-   * @notice Push signed price updates to the CopyOracle, then request a mortgage
-   * @param priceUpdates The signed price updates to push to the CopyOracle
+   * @notice Push signed price updates to the SimpleOracle, then request a mortgage
+   * @param priceUpdates The signed price updates to push to the SimpleOracle
    * @param usdToken The address of the usdToken to pull in
    * @param creationRequest The creation request
    * @param isNative Whether the collateral is the native token or not (i.e., whype: 0x555...)

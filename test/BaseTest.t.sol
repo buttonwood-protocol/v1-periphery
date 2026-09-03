@@ -38,7 +38,7 @@ import {OrderPool} from "@core/OrderPool.sol";
 // import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IConversionQueue} from "@core/interfaces/IConversionQueue/IConversionQueue.sol";
 import {ConversionQueue} from "@core/ConversionQueue.sol";
-import {MockCopyOracle} from "./mocks/MockCopyOracle.sol";
+import {MockSimpleOracle} from "./mocks/MockSimpleOracle.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {RolloverVault} from "../src/RolloverVault.sol";
 import {FulfillmentVault} from "../src/FulfillmentVault.sol";
@@ -95,9 +95,9 @@ contract BaseTest is Test {
   IOrderPool public orderPool;
   IConversionQueue public whypeConversionQueue;
   IConversionQueue public ubtcConversionQueue;
-  // Copy oracle
-  MockCopyOracle public copyOracle;
-  address public copyOracleSigner = makeAddr("copyOracleSigner");
+  // Simple oracle
+  MockSimpleOracle public simpleOracle;
+  address public simpleOracleSigner = makeAddr("simpleOracleSigner");
   // OPool Config
   OriginationPoolConfig public originationPoolConfig;
   string public namePrefix = "Test Origination Pool";
@@ -402,8 +402,8 @@ contract BaseTest is Test {
     generalManager.setOriginationPoolScheduler(address(originationPoolScheduler));
     vm.stopPrank();
 
-    // Deploy the copy oracle
-    copyOracle = new MockCopyOracle(copyOracleSigner);
+    // Deploy the simple oracle
+    simpleOracle = new MockSimpleOracle(simpleOracleSigner);
   }
 
   function primeRolloverVault() public {

@@ -37,7 +37,7 @@ contract DeployRouterScript is DeployFulfillmentVaultScript {
       generalManagerAddress,
       address(rolloverVault),
       address(fulfillmentVault),
-      copyOracleAddress
+      simpleOracleAddress
     );
     router.approveCollaterals();
     router.approveUsdTokens();

@@ -23,7 +23,7 @@ interface IRouterErrors {
   error VaultWhitelistEnforced(address vault, address sender);
 
   /**
-   * @notice Thrown when a price push is requested but the router has no CopyOracle configured
+   * @notice Thrown when a price push is requested but the router has no SimpleOracle configured
    */
-  error CopyOracleNotSet();
+  error SimpleOracleNotSet();
 }

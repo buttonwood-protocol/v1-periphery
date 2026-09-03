@@ -14,7 +14,7 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IUSDX} from "@core/interfaces/IUSDX/IUSDX.sol";
 import {CreationRequest} from "@core/types/orders/OrderRequests.sol";
 import {IWNT} from "./interfaces/IWNT.sol";
-import {ICopyOracle} from "./interfaces/ICopyOracle.sol";
+import {ISimpleOracle} from "./interfaces/ISimpleOracle.sol";
 import {OPoolConfigId} from "@core/types/OPoolConfigId.sol";
 import {
   IOriginationPoolScheduler,
@@ -54,7 +54,7 @@ contract Router is
   /// @inheritdoc IRouter
   address public immutable fulfillmentVault;
   /// @inheritdoc IRouter
-  address public immutable copyOracle;
+  address public immutable simpleOracle;
   /// @inheritdoc IRouter
   address public immutable wrappedNativeToken;
   /// @inheritdoc IRouter
@@ -69,20 +69,20 @@ contract Router is
    * @param _generalManager The address of the general manager contract
    * @param _rolloverVault The address of the rollover vault contract
    * @param _fulfillmentVault The address of the fulfillment vault contract
-   * @param _copyOracle The address of the CopyOracle contract, or zero on chains whose oracles are read on-chain
+   * @param _simpleOracle The address of the SimpleOracle contract, or zero on chains whose oracles are read on-chain
    */
   constructor(
     address _wrappedNativeToken,
     address _generalManager,
     address _rolloverVault,
     address _fulfillmentVault,
-    address _copyOracle
+    address _simpleOracle
   ) {
     wrappedNativeToken = _wrappedNativeToken;
     generalManager = _generalManager;
     rolloverVault = _rolloverVault;
     fulfillmentVault = _fulfillmentVault;
-    copyOracle = _copyOracle;
+    simpleOracle = _simpleOracle;
     usdx = IGeneralManager(_generalManager).usdx();
     consol = IGeneralManager(_generalManager).consol();
     originationPoolScheduler = IGeneralManager(_generalManager).originationPoolScheduler();
@@ -252,12 +252,12 @@ contract Router is
     payable
     returns (uint256 collateralCollected, uint256 usdxCollected, uint256 paymentAmount, uint8 collateralDecimals)
   {
-    if (copyOracle == address(0)) {
-      revert CopyOracleNotSet();
+    if (simpleOracle == address(0)) {
+      revert SimpleOracleNotSet();
     }
 
     // Push the signed prices so the oracles are fresh for this request (no fee is charged)
-    ICopyOracle(copyOracle).updatePrices(priceUpdates);
+    ISimpleOracle(simpleOracle).updatePrices(priceUpdates);
 
     return requestMortgage(usdToken, creationRequest, isNative, maxCollected);
   }

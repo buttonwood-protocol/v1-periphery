@@ -2,12 +2,12 @@
 pragma solidity ^0.8.20;
 
 /**
- * @title ICopyOracle
+ * @title ISimpleOracle
  * @author @SocksNFlops
- * @notice Interface for the CopyOracle contract, which stores signer-attested prices pushed by callers.
- * @dev Local mirror of the core repo's `interfaces/ICopyOracle.sol`; remove once `lib/cash` ships it.
+ * @notice Interface for the SimpleOracle contract, which stores signer-attested prices pushed by callers.
+ * @dev Local mirror of the core repo's `interfaces/ISimpleOracle.sol`; remove once `lib/cash` ships it.
  */
-interface ICopyOracle {
+interface ISimpleOracle {
   /**
    * @notice A single signed price update
    * @param id The feed identifier

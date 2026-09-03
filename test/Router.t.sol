@@ -38,7 +38,7 @@ import {OrderPool} from "@core/OrderPool.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IConversionQueue} from "@core/interfaces/IConversionQueue/IConversionQueue.sol";
 import {ConversionQueue} from "@core/ConversionQueue.sol";
-import {MockCopyOracle} from "./mocks/MockCopyOracle.sol";
+import {MockSimpleOracle} from "./mocks/MockSimpleOracle.sol";
 import {IRouterErrors} from "../src/interfaces/IRouter/IRouterErrors.sol";
 
 contract RouterTest is BaseTest {
@@ -53,7 +53,7 @@ contract RouterTest is BaseTest {
 
     // Deploy the router
     router = new Router(
-      address(whype), address(generalManager), address(rolloverVault), address(fulfillmentVault), address(copyOracle)
+      address(whype), address(generalManager), address(rolloverVault), address(fulfillmentVault), address(simpleOracle)
     );
 
     // Run the approve functions on the router
@@ -66,7 +66,7 @@ contract RouterTest is BaseTest {
     assertEq(address(router.rolloverVault()), address(rolloverVault), "Rollover vault address is incorrect");
     assertEq(address(router.fulfillmentVault()), address(fulfillmentVault), "Fulfillment vault address is incorrect");
     assertEq(address(router.wrappedNativeToken()), address(whype), "Wrapped native token address is incorrect");
-    assertEq(address(router.copyOracle()), address(copyOracle), "Copy oracle address is incorrect");
+    assertEq(address(router.simpleOracle()), address(simpleOracle), "Simple oracle address is incorrect");
     assertEq(address(router.usdx()), generalManager.usdx(), "USDX address is incorrect");
     assertEq(address(router.consol()), generalManager.consol(), "Consol address is incorrect");
     assertEq(
@@ -89,7 +89,7 @@ contract RouterTest is BaseTest {
   function test_approveCollaterals() public {
     // Making a new router just for this test
     router = new Router(
-      address(whype), address(generalManager), address(rolloverVault), address(fulfillmentVault), address(copyOracle)
+      address(whype), address(generalManager), address(rolloverVault), address(fulfillmentVault), address(simpleOracle)
     );
     // The WHYPE is already approved because it's the wrappedNativeToken in the constructor
     // So let's verify it's already approved
@@ -115,7 +115,7 @@ contract RouterTest is BaseTest {
   function test_approveUsdTokens() public {
     // Making a new router just for this test
     router = new Router(
-      address(whype), address(generalManager), address(rolloverVault), address(fulfillmentVault), address(copyOracle)
+      address(whype), address(generalManager), address(rolloverVault), address(fulfillmentVault), address(simpleOracle)
     );
 
     // Check initial state - router should not have approvals for USD tokens yet
@@ -336,7 +336,7 @@ contract RouterTest is BaseTest {
     vm.deal(borrower, 0.01e18);
   }
 
-  /// @dev Two encoded price updates in the CopyOracle batch format
+  /// @dev Two encoded price updates in the SimpleOracle batch format
   function _priceUpdates() internal view returns (bytes[] memory priceUpdates) {
     priceUpdates = new bytes[](2);
     priceUpdates[0] = abi.encode(bytes32("HYPE"), int256(50e8), block.timestamp, bytes("sig-hype"));
@@ -357,17 +357,17 @@ contract RouterTest is BaseTest {
     );
     vm.stopPrank();
 
-    // Every update reached the copy oracle, in order
-    assertEq(copyOracle.updateCount(), 2, "Copy oracle should have received both updates");
-    (bytes32 id, int256 price, uint256 timestamp) = copyOracle.updates(0);
+    // Every update reached the simple oracle, in order
+    assertEq(simpleOracle.updateCount(), 2, "Simple oracle should have received both updates");
+    (bytes32 id, int256 price, uint256 timestamp) = simpleOracle.updates(0);
     assertEq(id, bytes32("HYPE"), "First update id is incorrect");
     assertEq(price, int256(50e8), "First update price is incorrect");
     assertEq(timestamp, block.timestamp, "First update timestamp is incorrect");
-    (id, price, timestamp) = copyOracle.updates(1);
+    (id, price, timestamp) = simpleOracle.updates(1);
     assertEq(id, bytes32("BTC"), "Second update id is incorrect");
     assertEq(price, int256(100_000e8), "Second update price is incorrect");
     assertEq(timestamp, block.timestamp - 1, "Second update timestamp is incorrect");
-    (int256 answer, uint256 updatedAt) = copyOracle.latestRoundData(bytes32("HYPE"));
+    (int256 answer, uint256 updatedAt) = simpleOracle.latestRoundData(bytes32("HYPE"));
     assertEq(answer, int256(50e8), "Latest HYPE answer is incorrect");
     assertEq(updatedAt, block.timestamp, "Latest HYPE updatedAt is incorrect");
 
@@ -397,7 +397,7 @@ contract RouterTest is BaseTest {
     );
     vm.stopPrank();
 
-    assertEq(copyOracle.updateCount(), 2, "Copy oracle should have received both updates");
+    assertEq(simpleOracle.updateCount(), 2, "Simple oracle should have received both updates");
     assertEq(collateralCollected, requiredCollateralCollected, "Collateral collected is incorrect");
     assertEq(usdxCollected, 0, "No USDX is collected for a compounding request");
     assertEq(whype.balanceOf(address(orderPool)), collateralCollected, "WHYPE balance of order pool is incorrect");
@@ -417,7 +417,7 @@ contract RouterTest is BaseTest {
     );
     vm.stopPrank();
 
-    assertEq(copyOracle.updateCount(), 0, "Copy oracle should have received no updates");
+    assertEq(simpleOracle.updateCount(), 0, "Simple oracle should have received no updates");
     assertEq(mortgageNFT.ownerOf(1), borrower, "Borrower should own the mortgage NFT");
   }
 
@@ -426,24 +426,24 @@ contract RouterTest is BaseTest {
     CreationRequest memory creationRequest = _whypeCreationRequest(false);
     _fundBorrowerForBnpl(creationRequest);
     bytes[] memory priceUpdates = _priceUpdates();
-    copyOracle.setShouldRevert(true);
+    simpleOracle.setShouldRevert(true);
 
     vm.startPrank(borrower);
-    vm.expectRevert(abi.encodeWithSelector(MockCopyOracle.MockCopyOracleRejected.selector));
+    vm.expectRevert(abi.encodeWithSelector(MockSimpleOracle.MockSimpleOracleRejected.selector));
     router.updatePricesAndRequestMortgage{value: 0.01e18}(priceUpdates, address(usdt), creationRequest, false, 2576e18);
     vm.stopPrank();
 
-    assertEq(copyOracle.updateCount(), 0, "Copy oracle should have stored nothing");
+    assertEq(simpleOracle.updateCount(), 0, "Simple oracle should have stored nothing");
     assertEq(usdx.balanceOf(address(orderPool)), 0, "No USDX should have reached the order pool");
   }
 
-  function test_updatePricesAndRequestMortgage_revertsWhenCopyOracleNotSet() public {
+  function test_updatePricesAndRequestMortgage_revertsWhenSimpleOracleNotSet() public {
     router = new Router(
       address(whype), address(generalManager), address(rolloverVault), address(fulfillmentVault), address(0)
     );
     router.approveCollaterals();
     router.approveUsdTokens();
-    assertEq(router.copyOracle(), address(0), "Copy oracle should be unset");
+    assertEq(router.simpleOracle(), address(0), "Simple oracle should be unset");
 
     _primeOriginationPool();
     CreationRequest memory creationRequest = _whypeCreationRequest(false);
@@ -451,11 +451,11 @@ contract RouterTest is BaseTest {
     bytes[] memory priceUpdates = _priceUpdates();
 
     vm.startPrank(borrower);
-    vm.expectRevert(abi.encodeWithSelector(IRouterErrors.CopyOracleNotSet.selector));
+    vm.expectRevert(abi.encodeWithSelector(IRouterErrors.SimpleOracleNotSet.selector));
     router.updatePricesAndRequestMortgage{value: 0.01e18}(priceUpdates, address(usdt), creationRequest, false, 2576e18);
     vm.stopPrank();
 
-    // Plain requestMortgage still works on a router without a copy oracle
+    // Plain requestMortgage still works on a router without a simple oracle
     vm.startPrank(borrower);
     router.requestMortgage{value: 0.01e18}(address(usdt), creationRequest, false, 2576e18);
     vm.stopPrank();
