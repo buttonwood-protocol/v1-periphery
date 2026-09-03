@@ -12,7 +12,7 @@ contract BaseScript is Script {
   // Core Args
   address public wrappedNativeTokenAddress;
   address public generalManagerAddress;
-  address public pythAddress;
+  address public copyOracleAddress;
 
   function setUp() public virtual {
     deployerAddress = vm.envAddress("DEPLOYER_ADDRESS");
@@ -27,8 +27,9 @@ contract BaseScript is Script {
     console.log("Wrapped native token address: %s", wrappedNativeTokenAddress);
     generalManagerAddress = vm.envAddress("GENERAL_MANAGER_ADDRESS");
     console.log("General manager address: %s", generalManagerAddress);
-    pythAddress = vm.envAddress("PYTH_ADDRESS");
-    console.log("Pyth address: %s", pythAddress);
+    // Zero on chains whose oracles are read on-chain; the Router's price-push path is disabled there
+    copyOracleAddress = vm.envOr("COPY_ORACLE_ADDRESS", address(0));
+    console.log("Copy oracle address: %s", copyOracleAddress);
   }
 
   function run() public virtual {

@@ -30,10 +30,10 @@ interface IRouter is IRouterErrors {
   function fulfillmentVault() external view returns (address);
 
   /**
-   * @notice The address of the Pyth contract
-   * @return The address of the Pyth contract
+   * @notice The address of the CopyOracle contract (zero on chains whose oracles are read on-chain)
+   * @return The address of the CopyOracle contract
    */
-  function pyth() external view returns (address);
+  function copyOracle() external view returns (address);
 
   /**
    * @notice The address of the wrapped native token
@@ -104,8 +104,8 @@ interface IRouter is IRouterErrors {
     returns (uint256 collateralCollected, uint256 usdxCollected, uint256 paymentAmount, uint8 collateralDecimals);
 
   /**
-   * @notice Request a mortgage
-   * @param priceUpdates The price updates to send to the Pyth contract
+   * @notice Push signed price updates to the CopyOracle, then request a mortgage
+   * @param priceUpdates The signed price updates to push to the CopyOracle
    * @param usdToken The address of the usdToken to pull in
    * @param creationRequest The creation request
    * @param isNative Whether the collateral is the native token or not (i.e., whype: 0x555...)
@@ -115,7 +115,7 @@ interface IRouter is IRouterErrors {
    * @return paymentAmount The amount of payment to be made
    * @return collateralDecimals The decimals of the collateral
    */
-  function updatePriceFeedsAndRequestMortgage(
+  function updatePricesAndRequestMortgage(
     bytes[] calldata priceUpdates,
     address usdToken,
     CreationRequest calldata creationRequest,
