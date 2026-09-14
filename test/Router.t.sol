@@ -211,6 +211,165 @@ contract RouterTest is BaseTest {
     assertEq(whype.balanceOf(address(router)), 0, "WHYPE balance of router should be 0");
   }
 
+  function test_requestMortgage_BNPLWithOriginationFee() public {
+    // Enable the origination fee on the general manager
+    vm.startPrank(admin);
+    generalManager.setOriginationFeeRate(100);
+    generalManager.setFeeRecipient(makeAddr("protocolFeeRecipient"));
+    vm.stopPrank();
+
+    // Lender deposits $100k into the origination pool
+    {
+      vm.startPrank(lender);
+      MockERC20(address(usdt)).mint(lender, 100e6); // 100 USDT
+      MockERC20(address(usdt)).approve(address(usdx), 100e6);
+      USDX(address(usdx)).deposit(address(usdt), 100e6); // This gives us USDX
+      USDX(address(usdx)).approve(address(originationPool), 100e18);
+      originationPool.deposit(100e18);
+      vm.stopPrank();
+    }
+
+    // Skip ahead to the deploy phase of the origination pool
+    vm.warp(originationPool.deployPhaseTimestamp());
+
+    // Set the price of WHYPE to $50
+    MockPriceOracle(address(whypePriceOracle)).setPrice(50e18);
+
+    // Create a basic creation request for BNPL mortgage with a payment plan
+    CreationRequest memory creationRequest;
+    {
+      uint256[] memory collateralAmounts = new uint256[](1);
+      address[] memory originationPools = new address[](1);
+      // Buying 100 WHYPE with 1 origination pool
+      collateralAmounts[0] = 100e18;
+      originationPools[0] = address(originationPool);
+
+      creationRequest = CreationRequest({
+        base: BaseRequest({
+          collateralAmounts: collateralAmounts,
+          totalPeriods: 36,
+          originationPools: originationPools,
+          isCompounding: false, // Buy-now-pay-later
+          expiration: block.timestamp
+        }),
+        mortgageId: "Mortgage - 003",
+        collateral: address(whype),
+        subConsol: address(whypeSubConsol),
+        conversionQueues: new address[](0), // No conversion queue
+        hasPaymentPlan: true // Has a payment plan
+      });
+    }
+
+    // The quote must include the origination fee on top of the legacy amounts
+    uint256 cost = Math.mulDiv(50e18, 1e4 + 100, 1e4) * 100; // $50 * (101% with spread) * 100 WHYPE
+    uint256 expectedFee = Math.mulDiv(cost, 100, 1e4, Math.Rounding.Ceil);
+    (, uint256 requiredUsdxCollected,,) = router.calculateCollectedAmounts(creationRequest);
+    assertEq(
+      requiredUsdxCollected,
+      originationPool.calculateReturnAmount(cost / 2) + (cost % 2) + expectedFee,
+      "Quote should include the origination fee"
+    );
+
+    // Mint the required usdt (NOT usdx) to the borrower and approve it to the router
+    vm.startPrank(borrower);
+    uint256 usdtAmount = router.convert(address(usdx), address(usdt), requiredUsdxCollected);
+    MockERC20(address(usdt)).mint(borrower, usdtAmount);
+    MockERC20(address(usdt)).approve(address(router), usdtAmount);
+    vm.stopPrank();
+
+    // Deal 0.01e18 of native tokens to the borrower
+    deal(address(borrower), 0.01e18);
+
+    // Borrower calls requestMortgage (using usdt NOT usdx) and the fee-inclusive escrow lands in the order pool
+    vm.startPrank(borrower);
+    (, uint256 usdxCollected,,) = router.requestMortgage{value: 0.01e18}(address(usdt), creationRequest, false, 2700e18);
+    vm.stopPrank();
+    assertEq(usdxCollected, requiredUsdxCollected, "Collected amount should match the fee-inclusive quote");
+    assertEq(usdx.balanceOf(address(orderPool)), usdxCollected, "Order pool should hold the fee-inclusive escrow");
+    assertEq(usdx.balanceOf(address(router)), 0, "USDX balance of router should be 0");
+  }
+
+  function test_requestMortgage_CompoundingWithOriginationFee() public {
+    // Enable the origination fee on the general manager
+    vm.startPrank(admin);
+    generalManager.setOriginationFeeRate(100);
+    generalManager.setFeeRecipient(makeAddr("protocolFeeRecipient"));
+    vm.stopPrank();
+
+    // Lender deposits $100k into the origination pool
+    {
+      vm.startPrank(lender);
+      MockERC20(address(usdt)).mint(lender, 100e6); // 100 USDT
+      MockERC20(address(usdt)).approve(address(usdx), 100e6);
+      USDX(address(usdx)).deposit(address(usdt), 100e6); // This gives us USDX
+      USDX(address(usdx)).approve(address(originationPool), 100e18);
+      originationPool.deposit(100e18);
+      vm.stopPrank();
+    }
+
+    // Skip ahead to the deploy phase of the origination pool
+    vm.warp(originationPool.deployPhaseTimestamp());
+
+    // Set the price of WHYPE to $50
+    MockPriceOracle(address(whypePriceOracle)).setPrice(50e18);
+
+    // Create a basic creation request for compounding mortgage with no payment plan
+    CreationRequest memory creationRequest;
+    {
+      uint256[] memory collateralAmounts = new uint256[](1);
+      address[] memory originationPools = new address[](1);
+      address[] memory conversionQueues = new address[](1);
+      // Buying 100 WHYPE with 1 origination pool
+      collateralAmounts[0] = 100e18;
+      originationPools[0] = address(originationPool);
+      conversionQueues[0] = address(whypeConversionQueue);
+
+      creationRequest = CreationRequest({
+        base: BaseRequest({
+          collateralAmounts: collateralAmounts,
+          totalPeriods: 36,
+          originationPools: originationPools,
+          isCompounding: true, // Compounding
+          expiration: block.timestamp
+        }),
+        mortgageId: "Mortgage - 004",
+        collateral: address(whype),
+        subConsol: address(whypeSubConsol),
+        conversionQueues: conversionQueues, // One conversion queue
+        hasPaymentPlan: false // Has a payment plan
+      });
+    }
+
+    // The quote must collect the fee as extra collateral and deduct its cost from the payment amount
+    uint256 expectedFeeCollateral = Math.mulDiv(100e18, 100, 1e4, Math.Rounding.Ceil);
+    uint256 expectedFeeCost = Math.mulDiv(50e18, 1e4 + 100, 1e4) * 1; // cost of 1 WHYPE of fee collateral
+    (uint256 requiredCollateralCollected,, uint256 quotedPaymentAmount,) =
+      router.calculateCollectedAmounts(creationRequest);
+    assertEq(
+      requiredCollateralCollected,
+      originationPool.calculateReturnAmount((uint256(100e18) + 1) / 2) + expectedFeeCollateral,
+      "Quote should collect the fee as extra collateral"
+    );
+    uint256 feelessPaymentAmount = Math.mulDiv(Math.mulDiv(50e18, 1e4 + 100, 1e4), 1e4 - 200, 1e4) * 50;
+    assertEq(
+      quotedPaymentAmount, feelessPaymentAmount - expectedFeeCost, "Payment amount should be net of the fee cost"
+    );
+
+    // Deal the required amount of HYPE to the user (plus 0.01e18 for the gas fee)
+    vm.deal(borrower, requiredCollateralCollected + 0.01e18);
+
+    // Borrower calls requestMortgage and the fee-inclusive escrow lands in the order pool
+    vm.startPrank(borrower);
+    (uint256 collateralCollected,,,) =
+      router.requestMortgage{value: requiredCollateralCollected + 0.01e18}(address(whype), creationRequest, true, 53e18);
+    vm.stopPrank();
+    assertEq(collateralCollected, requiredCollateralCollected, "Collected amount should match the fee-inclusive quote");
+    assertEq(
+      whype.balanceOf(address(orderPool)), collateralCollected, "Order pool should hold the fee-inclusive escrow"
+    );
+    assertEq(whype.balanceOf(address(router)), 0, "WHYPE balance of router should be 0");
+  }
+
   function test_requestMortgage_CompoundingNoPaymentPlan() public {
     // Lender deposits $100k into the origination pool
     {

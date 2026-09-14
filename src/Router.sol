@@ -212,6 +212,11 @@ contract Router is
     view
     returns (uint256 collateralCollected, uint256 usdxCollected, uint256 paymentAmount, uint8 collateralDecimals)
   {
+    // The origination fee is disabled while the fee recipient is unset (mirrors GeneralManager._prepareOrder)
+    uint16 originationFeeRate = IGeneralManager(generalManager).feeRecipient() == address(0)
+      ? 0
+      : IGeneralManager(generalManager).originationFeeRate();
+
     if (creationRequest.base.isCompounding) {
       for (uint256 i = 0; i < creationRequest.base.originationPools.length; i++) {
         // If compounding, need to collect 1/2 of the collateral amount + commission fee (this is in the form of collateral)
@@ -222,6 +227,14 @@ contract Router is
         collateralDecimals = _collateralDecimals;
         paymentAmount += (2 * _cost)
           - IOriginationPool(creationRequest.base.originationPools[i]).calculateReturnAmount(_cost);
+        if (originationFeeRate > 0) {
+          // The origination fee is collected as extra collateral and its cost is deducted from the purchase amount
+          uint256 feeCollateral =
+            Math.mulDiv(creationRequest.base.collateralAmounts[i], originationFeeRate, 1e4, Math.Rounding.Ceil);
+          (uint256 feeCost,) = _calculateCost(creationRequest.collateral, feeCollateral);
+          collateralCollected += feeCollateral;
+          paymentAmount -= feeCost;
+        }
       }
     } else {
       for (uint256 i = 0; i < creationRequest.base.originationPools.length; i++) {
@@ -233,6 +246,10 @@ contract Router is
         usdxCollected += IOriginationPool(creationRequest.base.originationPools[i]).calculateReturnAmount(_cost / 2);
         if (_cost % 2 == 1) {
           usdxCollected += 1;
+        }
+        if (originationFeeRate > 0) {
+          // The origination fee is collected as extra USDX
+          usdxCollected += Math.mulDiv(_cost, originationFeeRate, 1e4, Math.Rounding.Ceil);
         }
       }
     }
