@@ -5,8 +5,10 @@ import {
   CollateralRoute,
   IUniswapFulfillmentVault
 } from "./interfaces/IUniswapFulfillmentVault/IUniswapFulfillmentVault.sol";
+import {RouterApproval, RouterConfig} from "./interfaces/IUniswapFulfillmentVault/RouterApproval.sol";
 import {IERC165, LiquidityVault} from "./LiquidityVault.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
@@ -19,6 +21,22 @@ import {PurchaseOrder} from "@core/types/orders/PurchaseOrder.sol";
 import {Constants} from "@core/libraries/Constants.sol";
 
 /**
+ * @title IAllowanceTransfer
+ * @notice The subset of Permit2's AllowanceTransfer surface the vault uses to scope a router's USDG spend
+ */
+interface IAllowanceTransfer {
+  /**
+   * @notice Approves a spender to pull a token through Permit2, up to an amount, until an expiration
+   * @dev Permit2 rejects a pull only when block.timestamp > expiration. A zero expiration is stored as block.timestamp.
+   * @param token The token to approve
+   * @param spender The spender address to approve
+   * @param amount The approved amount of the token
+   * @param expiration The timestamp at which the approval is no longer valid
+   */
+  function approve(address token, address spender, uint160 amount, uint48 expiration) external;
+}
+
+/**
  * @title UniswapFulfillmentVault
  * @author @SocksNFlops
  * @notice A fulfillment vault for chains whose venue is synchronously composable. Each fill is a single
@@ -28,6 +46,7 @@ import {Constants} from "@core/libraries/Constants.sol";
  */
 contract UniswapFulfillmentVault is LiquidityVault, ReentrancyGuardUpgradeable, IUniswapFulfillmentVault {
   using Math for uint256;
+  using SafeCast for uint256;
   using SafeERC20 for IERC20;
   using Address for address;
 
@@ -40,15 +59,17 @@ contract UniswapFulfillmentVault is LiquidityVault, ReentrancyGuardUpgradeable, 
    * @param _generalManager The address of the general manager
    * @param _usdx The address of the USDX token
    * @param _usdg The address of the USDG token (the USDX supported token used for the swap leg)
+   * @param _permit2 The address of the Permit2 contract used for Permit2-mode routers
    * @param _routes The oracle-anchored fill bounds per collateral
-   * @param _allowedRouters The swap router allowlist
+   * @param _routerApprovals The swap router allowlist, keyed by approval mode (None is not allowed)
    */
   struct UniswapFulfillmentVaultStorage {
     address _generalManager;
     address _usdx;
     address _usdg;
+    address _permit2;
     mapping(address collateral => CollateralRoute route) _routes;
-    mapping(address router => bool allowed) _allowedRouters;
+    mapping(address router => RouterApproval approval) _routerApprovals;
   }
 
   /**
@@ -78,7 +99,8 @@ contract UniswapFulfillmentVault is LiquidityVault, ReentrancyGuardUpgradeable, 
    * @param _decimalsOffset The decimals offset for measuring internal precision of shares
    * @param _generalManager The address of the general manager
    * @param _usdg The address of the USDG token
-   * @param allowedRouters The initial swap router allowlist
+   * @param _permit2 The address of the Permit2 contract
+   * @param routers The initial swap router allowlist, as (router, approval mode) pairs
    */
   // solhint-disable-next-line func-name-mixedcase
   function __UniswapFulfillmentVault_init(
@@ -88,37 +110,44 @@ contract UniswapFulfillmentVault is LiquidityVault, ReentrancyGuardUpgradeable, 
     uint8 _decimalsOffset,
     address _generalManager,
     address _usdg,
-    address[] memory allowedRouters
+    address _permit2,
+    RouterConfig[] memory routers
   ) internal onlyInitializing {
     __ERC20_init_unchained(name, symbol);
     __ReentrancyGuard_init();
     address[] memory assets = new address[](1);
     assets[0] = IGeneralManager(_generalManager).usdx();
     __LiquidityVault_init_unchained(_decimals, _decimalsOffset, assets, assets);
-    __UniswapFulfillmentVault_init_unchained(_generalManager, _usdg, allowedRouters);
+    __UniswapFulfillmentVault_init_unchained(_generalManager, _usdg, _permit2, routers);
   }
 
   /**
    * @dev Initializes the UniswapFulfillmentVault contract only
    * @param _generalManager The address of the general manager
    * @param _usdg The address of the USDG token
-   * @param allowedRouters The initial swap router allowlist
+   * @param _permit2 The address of the Permit2 contract
+   * @param routers The initial swap router allowlist, as (router, approval mode) pairs
    */
   // solhint-disable-next-line func-name-mixedcase
   function __UniswapFulfillmentVault_init_unchained(
     address _generalManager,
     address _usdg,
-    address[] memory allowedRouters
+    address _permit2,
+    RouterConfig[] memory routers
   ) internal onlyInitializing {
     if (_usdg == address(0)) {
       revert InvalidUsdg(_usdg);
+    }
+    if (_permit2 == address(0)) {
+      revert InvalidPermit2(_permit2);
     }
     UniswapFulfillmentVaultStorage storage $ = _getUniswapFulfillmentVaultStorage();
     $._generalManager = _generalManager;
     $._usdx = IGeneralManager(_generalManager).usdx();
     $._usdg = _usdg;
-    for (uint256 i = 0; i < allowedRouters.length; i++) {
-      _setRouterAllowed(allowedRouters[i], true);
+    $._permit2 = _permit2;
+    for (uint256 i = 0; i < routers.length; i++) {
+      _setRouterApproval(routers[i].router, routers[i].approval);
     }
   }
 
@@ -130,7 +159,8 @@ contract UniswapFulfillmentVault is LiquidityVault, ReentrancyGuardUpgradeable, 
    * @param _decimalsOffset The decimals offset for measuring internal precision of shares
    * @param _generalManager The address of the general manager
    * @param _usdg The address of the USDG token
-   * @param allowedRouters The initial swap router allowlist
+   * @param _permit2 The address of the Permit2 contract
+   * @param routers The initial swap router allowlist, as (router, approval mode) pairs
    * @param admin The address of the admin for the vault
    */
   function initialize(
@@ -140,10 +170,11 @@ contract UniswapFulfillmentVault is LiquidityVault, ReentrancyGuardUpgradeable, 
     uint8 _decimalsOffset,
     address _generalManager,
     address _usdg,
-    address[] memory allowedRouters,
+    address _permit2,
+    RouterConfig[] memory routers,
     address admin
   ) external initializer {
-    __UniswapFulfillmentVault_init(name, symbol, _decimals, _decimalsOffset, _generalManager, _usdg, allowedRouters);
+    __UniswapFulfillmentVault_init(name, symbol, _decimals, _decimalsOffset, _generalManager, _usdg, _permit2, routers);
     _grantRole(DEFAULT_ADMIN_ROLE, admin);
   }
 
@@ -198,8 +229,18 @@ contract UniswapFulfillmentVault is LiquidityVault, ReentrancyGuardUpgradeable, 
   }
 
   /// @inheritdoc IUniswapFulfillmentVault
+  function permit2() public view override returns (address) {
+    return _getUniswapFulfillmentVaultStorage()._permit2;
+  }
+
+  /// @inheritdoc IUniswapFulfillmentVault
+  function routerApproval(address router) public view override returns (RouterApproval) {
+    return _getUniswapFulfillmentVaultStorage()._routerApprovals[router];
+  }
+
+  /// @inheritdoc IUniswapFulfillmentVault
   function isAllowedRouter(address router) public view override returns (bool) {
-    return _getUniswapFulfillmentVaultStorage()._allowedRouters[router];
+    return _getUniswapFulfillmentVaultStorage()._routerApprovals[router] != RouterApproval.None;
   }
 
   /// @inheritdoc IUniswapFulfillmentVault
@@ -217,21 +258,21 @@ contract UniswapFulfillmentVault is LiquidityVault, ReentrancyGuardUpgradeable, 
   }
 
   /// @inheritdoc IUniswapFulfillmentVault
-  function setRouterAllowed(address router, bool allowed) external override onlyRole(DEFAULT_ADMIN_ROLE) {
-    _setRouterAllowed(router, allowed);
+  function setRouterApproval(address router, RouterApproval approval) external override onlyRole(DEFAULT_ADMIN_ROLE) {
+    _setRouterApproval(router, approval);
   }
 
   /**
-   * @dev Sets the allowlist entry for a router
+   * @dev Sets the approval mode for a router. None removes the router from the allowlist.
    * @param router The address of the router
-   * @param allowed Whether the router is allowed
+   * @param approval The approval mode for the router
    */
-  function _setRouterAllowed(address router, bool allowed) internal {
+  function _setRouterApproval(address router, RouterApproval approval) internal {
     if (router == address(0)) {
       revert InvalidRouter(router);
     }
-    emit RouterAllowedSet(router, allowed);
-    _getUniswapFulfillmentVaultStorage()._allowedRouters[router] = allowed;
+    emit RouterApprovalSet(router, approval);
+    _getUniswapFulfillmentVaultStorage()._routerApprovals[router] = approval;
   }
 
   /// @inheritdoc IUniswapFulfillmentVault
@@ -317,7 +358,7 @@ contract UniswapFulfillmentVault is LiquidityVault, ReentrancyGuardUpgradeable, 
     address router,
     bytes calldata swapCalldata
   ) internal returns (uint256 usdgSpent) {
-    if (!_getUniswapFulfillmentVaultStorage()._allowedRouters[router]) {
+    if (_getUniswapFulfillmentVaultStorage()._routerApprovals[router] == RouterApproval.None) {
       revert RouterNotAllowed(router);
     }
     uint256 maxUsdgIn = _withdrawBoundedSwapInput(collateral, collateralNeeded, purchaseAmount);
@@ -384,9 +425,7 @@ contract UniswapFulfillmentVault is LiquidityVault, ReentrancyGuardUpgradeable, 
 
     uint256 collateralBefore = IERC20(collateral).balanceOf(address(this));
     uint256 usdgBefore = usdg_.balanceOf(address(this));
-    usdg_.forceApprove(router, maxUsdgIn);
-    router.functionCall(swapCalldata);
-    usdg_.forceApprove(router, 0);
+    _callRouter(usdg_, router, maxUsdgIn, swapCalldata);
 
     uint256 usdgAfter = usdg_.balanceOf(address(this));
     usdgSpent = usdgBefore > usdgAfter ? usdgBefore - usdgAfter : 0;
@@ -404,6 +443,32 @@ contract UniswapFulfillmentVault is LiquidityVault, ReentrancyGuardUpgradeable, 
     if (usdgAfter > 0) {
       usdg_.forceApprove($._usdx, usdgAfter);
       IUSDX($._usdx).deposit($._usdg, usdgAfter);
+    }
+  }
+
+  /**
+   * @dev Calls the router with a USDG spend of at most maxUsdgIn granted under the router's approval mode, and
+   *      revokes it before returning. ERC20 mode approves the router on the token. Permit2 mode approves Permit2
+   *      on the token and grants the router a Permit2 allowance expiring at the current timestamp. No allowance
+   *      outlives the call.
+   * @param usdg_ The USDG token
+   * @param router The allowlisted router to call
+   * @param maxUsdgIn The maximum amount of USDG the router may pull
+   * @param swapCalldata The pre-encoded swap call
+   */
+  function _callRouter(IERC20 usdg_, address router, uint256 maxUsdgIn, bytes calldata swapCalldata) internal {
+    UniswapFulfillmentVaultStorage storage $ = _getUniswapFulfillmentVaultStorage();
+    if ($._routerApprovals[router] == RouterApproval.Permit2) {
+      address permit2_ = $._permit2;
+      usdg_.forceApprove(permit2_, maxUsdgIn);
+      IAllowanceTransfer(permit2_).approve(address(usdg_), router, maxUsdgIn.toUint160(), block.timestamp.toUint48());
+      router.functionCall(swapCalldata);
+      IAllowanceTransfer(permit2_).approve(address(usdg_), router, 0, 0);
+      usdg_.forceApprove(permit2_, 0);
+    } else {
+      usdg_.forceApprove(router, maxUsdgIn);
+      router.functionCall(swapCalldata);
+      usdg_.forceApprove(router, 0);
     }
   }
 }

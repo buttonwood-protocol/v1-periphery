@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {ILiquidityVault} from "../ILiquidityVault/ILiquidityVault.sol";
 import {IUniswapFulfillmentVaultEvents} from "./IUniswapFulfillmentVaultEvents.sol";
 import {IUniswapFulfillmentVaultErrors} from "./IUniswapFulfillmentVaultErrors.sol";
+import {RouterApproval} from "./RouterApproval.sol";
 
 /**
  * @notice The oracle-anchored fill bounds for a collateral
@@ -55,9 +56,22 @@ interface IUniswapFulfillmentVault is ILiquidityVault, IUniswapFulfillmentVaultE
   function collateralRoute(address collateral) external view returns (CollateralRoute memory);
 
   /**
+   * @notice Gets the address of the Permit2 contract used for Permit2-mode routers
+   * @return The address of the Permit2 contract
+   */
+  function permit2() external view returns (address);
+
+  /**
+   * @notice Gets the approval mode a swap router is allowed under
+   * @param router The address of the router
+   * @return The approval mode. None means the router is not allowed.
+   */
+  function routerApproval(address router) external view returns (RouterApproval);
+
+  /**
    * @notice Checks whether a swap router is on the allowlist
    * @param router The address of the router
-   * @return Whether the router is allowed
+   * @return Whether the router is allowed (its approval mode is not None)
    */
   function isAllowedRouter(address router) external view returns (bool);
 
@@ -69,11 +83,11 @@ interface IUniswapFulfillmentVault is ILiquidityVault, IUniswapFulfillmentVaultE
   function setCollateralRoute(address collateral, CollateralRoute calldata route) external;
 
   /**
-   * @notice Allows or disallows a swap router
+   * @notice Sets the approval mode a swap router is allowed under. None disallows the router.
    * @param router The address of the router
-   * @param allowed Whether the router is allowed
+   * @param approval The approval mode for the router
    */
-  function setRouterAllowed(address router, bool allowed) external;
+  function setRouterApproval(address router, RouterApproval approval) external;
 
   /**
    * @notice Approves an asset to the order pool
