@@ -158,8 +158,13 @@ contract UniswapFulfillmentVault is LiquidityVault, ReentrancyGuardUpgradeable, 
     return IERC20(usdx()).balanceOf(address(this));
   }
 
-  /// @dev Blocks share mints, burns, and transfers while a fill is executing, so the transient mid-fill
-  ///      balance sheet (USDG/collateral in flight) can never price a deposit or redemption.
+  /**
+   * @dev Blocks share mints, burns, and transfers while a fill is executing, so the transient mid-fill
+   *      balance sheet (USDG/collateral in flight) can never price a deposit or redemption.
+   * @param from The address the shares are transferred from, or the zero address when minting
+   * @param to The address the shares are transferred to, or the zero address when burning
+   * @param value The amount of shares transferred
+   */
   function _update(address from, address to, uint256 value) internal override {
     if (_reentrancyGuardEntered()) {
       revert ReentrancyGuardReentrantCall();
