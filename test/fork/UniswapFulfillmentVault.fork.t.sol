@@ -43,6 +43,11 @@ interface ISwapRouter02 {
   function exactOutputSingle(ExactOutputSingleParams calldata params) external payable returns (uint256 amountIn);
 }
 
+/// @dev Minimal Universal Router surface for encoding the keeper's swap calldata
+interface IUniversalRouter {
+  function execute(bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external payable;
+}
+
 /**
  * @title UniswapFulfillmentVaultForkTest
  * @notice End-to-end fill against live Robinhood Chain (4663) state: real USDG, real NVDA, the real
@@ -61,6 +66,11 @@ contract UniswapFulfillmentVaultForkTest is BaseTest {
   address constant SWAP_ROUTER02_ADDRESS = 0xCaf681a66D020601342297493863E78C959E5cb2;
   address constant NVDA_USDG_V3_POOL = 0xd4EB21209C4D6093f80B5b84f5C45cc093EA14a3; // 0.05% fee tier
   uint24 constant NVDA_POOL_FEE = 500;
+  address constant UNIVERSAL_ROUTER_ADDRESS = 0x8876789976dEcBfCbBbe364623C63652db8C0904;
+  address constant PERMIT2_ADDRESS = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
+
+  // Universal Router command bytes (universal-router Commands.sol, identical across tags 2.0.0-2.2.0)
+  uint8 constant UR_V3_SWAP_EXACT_OUT = 0x01;
 
   uint256 constant FEED_MAX_AGE = 7 days;
   uint16 constant ROUTE_PREMIUM_BPS = 50;
@@ -132,8 +142,9 @@ contract UniswapFulfillmentVaultForkTest is BaseTest {
 
     // Vault with the real SwapRouter02 allowlisted
     UniswapFulfillmentVault implementation = new UniswapFulfillmentVault();
-    address[] memory allowedRouters = new address[](1);
+    address[] memory allowedRouters = new address[](2);
     allowedRouters[0] = SWAP_ROUTER02_ADDRESS;
+    allowedRouters[1] = UNIVERSAL_ROUTER_ADDRESS;
     ERC1967Proxy proxy = new ERC1967Proxy(
       address(implementation),
       abi.encodeCall(
@@ -262,6 +273,42 @@ contract UniswapFulfillmentVaultForkTest is BaseTest {
           sqrtPriceLimitX96: 0
         }))
     );
+  }
+
+  /// @dev Encodes a real Universal Router V3_SWAP_EXACT_OUT for USDG -> NVDA paid by the vault (payerIsUser).
+  ///      The deployed router is a 2.1+ build, whose input carries a trailing minHopPriceX36 array.
+  ///      Exact-output paths are reversed: tokenOut, fee, tokenIn.
+  function _urV3ExactOutCalldata(uint256 amountOut, uint256 amountInMax) internal view returns (bytes memory) {
+    bytes[] memory inputs = new bytes[](1);
+    inputs[0] = abi.encode(
+      address(ufVault),
+      amountOut,
+      amountInMax,
+      abi.encodePacked(NVDA_ADDRESS, NVDA_POOL_FEE, USDG_ADDRESS),
+      true,
+      new uint256[](0)
+    );
+    return abi.encodeCall(IUniversalRouter.execute, (abi.encodePacked(UR_V3_SWAP_EXACT_OUT), inputs, block.timestamp));
+  }
+
+  function test_fork_fillOrder_universalRouterV3_plainApprovalReverts() public {
+    if (!forkEnabled) {
+      vm.skip(true);
+    }
+    assertGt(UNIVERSAL_ROUTER_ADDRESS.code.length, 0, "Universal Router should be deployed");
+
+    (uint256 index, uint256 purchaseAmount) = _createOrder(COLLATERAL_AMOUNT, block.timestamp + 10 minutes);
+    uint256 maxUsdgIn = _computeMaxUsdgIn(COLLATERAL_AMOUNT, purchaseAmount);
+
+    // The router pays through Permit2, where the vault holds no allowance: Permit2 rejects the pull
+    vm.startPrank(keeper);
+    vm.expectRevert(abi.encodeWithSignature("AllowanceExpired(uint256)", 0));
+    ufVault.fillOrder(
+      index, new uint256[](0), UNIVERSAL_ROUTER_ADDRESS, _urV3ExactOutCalldata(COLLATERAL_AMOUNT, maxUsdgIn)
+    );
+    vm.stopPrank();
+
+    assertEq(orderPool.orders(index).mortgageParams.collateral, NVDA_ADDRESS, "Order should remain open");
   }
 
   function test_fork_fillOrder_endToEnd() public {
