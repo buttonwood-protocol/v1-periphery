@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {BaseScript} from "./BaseScript.s.sol";
 import {console} from "forge-std/console.sol";
 import {UniswapFulfillmentVault} from "../src/UniswapFulfillmentVault.sol";
+import {RouterApproval, RouterConfig} from "../src/interfaces/IUniswapFulfillmentVault/RouterApproval.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 contract DeployUniswapFulfillmentVaultScript is BaseScript {
@@ -13,7 +14,10 @@ contract DeployUniswapFulfillmentVaultScript is BaseScript {
   uint8 public uniswapFulfillmentVaultDecimalsOffset;
   address public uniswapFulfillmentVaultAdminAddress;
   address public usdgAddress;
-  address[] public allowedRouters;
+  address public permit2Address;
+  RouterConfig[] public routers;
+
+  error InvalidRouterApproval(uint256 index, string approval);
 
   UniswapFulfillmentVault public uniswapFulfillmentVault;
 
@@ -31,12 +35,28 @@ contract DeployUniswapFulfillmentVaultScript is BaseScript {
     console.log("Uniswap fulfillment vault admin address: %s", uniswapFulfillmentVaultAdminAddress);
     usdgAddress = vm.envAddress("USDG_ADDRESS");
     console.log("USDG address: %s", usdgAddress);
+    permit2Address = vm.envAddress("PERMIT2_ADDRESS");
+    console.log("Permit2 address: %s", permit2Address);
+    // Each router is a pair: ALLOWED_ROUTER_<i> (address) and ALLOWED_ROUTER_<i>_APPROVAL ("ERC20" or "PERMIT2")
     uint256 allowedRouterCount = vm.envUint("ALLOWED_ROUTER_COUNT");
     for (uint256 i = 0; i < allowedRouterCount; i++) {
       address router = vm.envAddress(string.concat("ALLOWED_ROUTER_", vm.toString(i)));
-      console.log("Allowed router %s: %s", i, router);
-      allowedRouters.push(router);
+      string memory approvalName = vm.envString(string.concat("ALLOWED_ROUTER_", vm.toString(i), "_APPROVAL"));
+      RouterApproval approval = _parseRouterApproval(i, approvalName);
+      console.log("Allowed router %s: %s (%s)", i, router, approvalName);
+      routers.push(RouterConfig({router: router, approval: approval}));
     }
+  }
+
+  function _parseRouterApproval(uint256 index, string memory approvalName) internal pure returns (RouterApproval) {
+    bytes32 nameHash = keccak256(bytes(approvalName));
+    if (nameHash == keccak256("ERC20")) {
+      return RouterApproval.ERC20;
+    }
+    if (nameHash == keccak256("PERMIT2")) {
+      return RouterApproval.Permit2;
+    }
+    revert InvalidRouterApproval(index, approvalName);
   }
 
   function run() public virtual override {
@@ -50,16 +70,19 @@ contract DeployUniswapFulfillmentVaultScript is BaseScript {
     UniswapFulfillmentVault uniswapFulfillmentVaultImplementation = new UniswapFulfillmentVault();
 
     // Create the initializer data
-    bytes memory initializerData = abi.encodeWithSelector(
-      UniswapFulfillmentVault.initialize.selector,
-      uniswapFulfillmentVaultName,
-      uniswapFulfillmentVaultSymbol,
-      uniswapFulfillmentVaultDecimals,
-      uniswapFulfillmentVaultDecimalsOffset,
-      generalManagerAddress,
-      usdgAddress,
-      allowedRouters,
-      uniswapFulfillmentVaultAdminAddress
+    bytes memory initializerData = abi.encodeCall(
+      UniswapFulfillmentVault.initialize,
+      (
+        uniswapFulfillmentVaultName,
+        uniswapFulfillmentVaultSymbol,
+        uniswapFulfillmentVaultDecimals,
+        uniswapFulfillmentVaultDecimalsOffset,
+        generalManagerAddress,
+        usdgAddress,
+        permit2Address,
+        routers,
+        uniswapFulfillmentVaultAdminAddress
+      )
     );
 
     // Deploy the proxy with the initializer data

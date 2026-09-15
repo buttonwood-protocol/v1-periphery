@@ -28,17 +28,21 @@ import {
 import {
   IUniswapFulfillmentVaultErrors
 } from "../src/interfaces/IUniswapFulfillmentVault/IUniswapFulfillmentVaultErrors.sol";
+import {RouterApproval, RouterConfig} from "../src/interfaces/IUniswapFulfillmentVault/RouterApproval.sol";
 import {UniswapFulfillmentVault} from "../src/UniswapFulfillmentVault.sol";
 import {Router} from "../src/Router.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockPriceOracle} from "./mocks/MockPriceOracle.sol";
 import {MockStalePriceOracle} from "./mocks/MockStalePriceOracle.sol";
 import {MockSwapRouter, MockReentrantSwapRouter} from "./mocks/MockSwapRouter.sol";
+import {MockPermit2, MockPermit2SwapRouter} from "./mocks/MockPermit2.sol";
 
 contract UniswapFulfillmentVaultTest is BaseTest {
   MockERC20 public usdg; // 6-decimal USD-leg token (scalar 1e12/1 on USDX)
   UniswapFulfillmentVault public ufVault;
-  MockSwapRouter public swapRouter;
+  MockSwapRouter public swapRouter; // ERC20 mode
+  MockPermit2 public permit2;
+  MockPermit2SwapRouter public permit2Router; // Permit2 mode
   Router public periphRouter;
 
   string UFV_NAME = "Test Uniswap Fulfillment Vault";
@@ -67,6 +71,8 @@ contract UniswapFulfillmentVaultTest is BaseTest {
     vm.stopPrank();
 
     swapRouter = new MockSwapRouter();
+    permit2 = new MockPermit2();
+    permit2Router = new MockPermit2SwapRouter(permit2);
     ufVault = _deployVault(address(usdg));
 
     // Configure the whype route against the mock oracle
@@ -105,8 +111,9 @@ contract UniswapFulfillmentVaultTest is BaseTest {
   /// @dev Deploys, initializes, and wires a UniswapFulfillmentVault around the given USDG token
   function _deployVault(address usdgToken) internal returns (UniswapFulfillmentVault vault) {
     UniswapFulfillmentVault implementation = new UniswapFulfillmentVault();
-    address[] memory allowedRouters = new address[](1);
-    allowedRouters[0] = address(swapRouter);
+    RouterConfig[] memory routers = new RouterConfig[](2);
+    routers[0] = RouterConfig({router: address(swapRouter), approval: RouterApproval.ERC20});
+    routers[1] = RouterConfig({router: address(permit2Router), approval: RouterApproval.Permit2});
     bytes memory initializerData = abi.encodeCall(
       UniswapFulfillmentVault.initialize,
       (
@@ -116,7 +123,8 @@ contract UniswapFulfillmentVaultTest is BaseTest {
         UFV_DECIMALS_OFFSET,
         address(generalManager),
         usdgToken,
-        allowedRouters,
+        address(permit2),
+        routers,
         admin
       )
     );
@@ -208,9 +216,22 @@ contract UniswapFulfillmentVaultTest is BaseTest {
 
   /// @dev Fills an order through the mock swap router as the keeper
   function _fill(uint256 index, uint256 amountIn, uint256 amountOut) internal {
+    _fillVia(address(swapRouter), index, amountIn, amountOut);
+  }
+
+  /// @dev Fills an order through the given router as the keeper
+  function _fillVia(address routerAddress, uint256 index, uint256 amountIn, uint256 amountOut) internal {
     vm.startPrank(keeper);
-    ufVault.fillOrder(index, new uint256[](0), address(swapRouter), _swapData(amountIn, amountOut));
+    ufVault.fillOrder(index, new uint256[](0), routerAddress, _swapData(amountIn, amountOut));
     vm.stopPrank();
+  }
+
+  /// @dev Asserts the vault holds no USDG allowance to the router, to Permit2, or inside Permit2 for the router
+  function _assertNoStandingAllowance(address routerAddress) internal view {
+    assertEq(usdg.allowance(address(ufVault), routerAddress), 0, "No USDG allowance to the router");
+    assertEq(usdg.allowance(address(ufVault), address(permit2)), 0, "No USDG allowance to Permit2");
+    (uint160 amount,,) = permit2.allowance(address(ufVault), address(usdg), routerAddress);
+    assertEq(amount, 0, "No Permit2 allowance for the router");
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -229,7 +250,12 @@ contract UniswapFulfillmentVaultTest is BaseTest {
     assertEq(ufVault.orderPool(), address(orderPool));
     assertEq(ufVault.usdx(), address(usdx));
     assertEq(ufVault.usdg(), address(usdg));
+    assertEq(ufVault.permit2(), address(permit2));
+    assertTrue(ufVault.routerApproval(address(swapRouter)) == RouterApproval.ERC20);
+    assertTrue(ufVault.routerApproval(address(permit2Router)) == RouterApproval.Permit2);
+    assertTrue(ufVault.routerApproval(rando) == RouterApproval.None);
     assertTrue(ufVault.isAllowedRouter(address(swapRouter)));
+    assertTrue(ufVault.isAllowedRouter(address(permit2Router)));
     assertFalse(ufVault.isAllowedRouter(rando));
     assertTrue(ufVault.hasRole(ufVault.DEFAULT_ADMIN_ROLE(), admin));
     assertFalse(ufVault.paused(), "UniswapFulfillmentVault should not be paused");
@@ -251,11 +277,54 @@ contract UniswapFulfillmentVaultTest is BaseTest {
         UFV_DECIMALS_OFFSET,
         address(generalManager),
         address(0),
-        new address[](0),
+        address(permit2),
+        new RouterConfig[](0),
         admin
       )
     );
     vm.expectRevert(abi.encodeWithSelector(IUniswapFulfillmentVaultErrors.InvalidUsdg.selector, address(0)));
+    new ERC1967Proxy(address(implementation), initializerData);
+  }
+
+  function test_initialize_revertsOnZeroPermit2() public {
+    UniswapFulfillmentVault implementation = new UniswapFulfillmentVault();
+    bytes memory initializerData = abi.encodeCall(
+      UniswapFulfillmentVault.initialize,
+      (
+        UFV_NAME,
+        UFV_SYMBOL,
+        UFV_DECIMALS,
+        UFV_DECIMALS_OFFSET,
+        address(generalManager),
+        address(usdg),
+        address(0),
+        new RouterConfig[](0),
+        admin
+      )
+    );
+    vm.expectRevert(abi.encodeWithSelector(IUniswapFulfillmentVaultErrors.InvalidPermit2.selector, address(0)));
+    new ERC1967Proxy(address(implementation), initializerData);
+  }
+
+  function test_initialize_revertsOnZeroRouter() public {
+    UniswapFulfillmentVault implementation = new UniswapFulfillmentVault();
+    RouterConfig[] memory routers = new RouterConfig[](1);
+    routers[0] = RouterConfig({router: address(0), approval: RouterApproval.Permit2});
+    bytes memory initializerData = abi.encodeCall(
+      UniswapFulfillmentVault.initialize,
+      (
+        UFV_NAME,
+        UFV_SYMBOL,
+        UFV_DECIMALS,
+        UFV_DECIMALS_OFFSET,
+        address(generalManager),
+        address(usdg),
+        address(permit2),
+        routers,
+        admin
+      )
+    );
+    vm.expectRevert(abi.encodeWithSelector(IUniswapFulfillmentVaultErrors.InvalidRouter.selector, address(0)));
     new ERC1967Proxy(address(implementation), initializerData);
   }
 
@@ -359,8 +428,9 @@ contract UniswapFulfillmentVaultTest is BaseTest {
     assertEq(route.maxFillCost, 0);
   }
 
-  function test_setRouterAllowed_revertsWhenNotAdmin(address caller) public {
+  function test_setRouterApproval_revertsWhenNotAdmin(address caller, uint8 approvalSeed) public {
     vm.assume(ufVault.hasRole(ufVault.DEFAULT_ADMIN_ROLE(), caller) == false);
+    RouterApproval approval = RouterApproval(bound(approvalSeed, 0, uint8(type(RouterApproval).max)));
 
     vm.startPrank(caller);
     vm.expectRevert(
@@ -368,28 +438,43 @@ contract UniswapFulfillmentVaultTest is BaseTest {
         IAccessControl.AccessControlUnauthorizedAccount.selector, caller, ufVault.DEFAULT_ADMIN_ROLE()
       )
     );
-    ufVault.setRouterAllowed(rando, true);
+    ufVault.setRouterApproval(rando, approval);
     vm.stopPrank();
   }
 
-  function test_setRouterAllowed_revertsOnZeroAddress() public {
+  function test_setRouterApproval_revertsOnZeroAddress() public {
     vm.startPrank(admin);
     vm.expectRevert(abi.encodeWithSelector(IUniswapFulfillmentVaultErrors.InvalidRouter.selector, address(0)));
-    ufVault.setRouterAllowed(address(0), true);
+    ufVault.setRouterApproval(address(0), RouterApproval.Permit2);
     vm.stopPrank();
   }
 
-  function test_setRouterAllowed_toggles() public {
+  function test_setRouterApproval_setsEachModeAndClears() public {
+    // ERC20
     vm.startPrank(admin);
     vm.expectEmit(true, true, true, true);
-    emit IUniswapFulfillmentVaultEvents.RouterAllowedSet(rando, true);
-    ufVault.setRouterAllowed(rando, true);
+    emit IUniswapFulfillmentVaultEvents.RouterApprovalSet(rando, RouterApproval.ERC20);
+    ufVault.setRouterApproval(rando, RouterApproval.ERC20);
     vm.stopPrank();
+    assertTrue(ufVault.routerApproval(rando) == RouterApproval.ERC20);
     assertTrue(ufVault.isAllowedRouter(rando));
 
+    // Permit2
     vm.startPrank(admin);
-    ufVault.setRouterAllowed(rando, false);
+    vm.expectEmit(true, true, true, true);
+    emit IUniswapFulfillmentVaultEvents.RouterApprovalSet(rando, RouterApproval.Permit2);
+    ufVault.setRouterApproval(rando, RouterApproval.Permit2);
     vm.stopPrank();
+    assertTrue(ufVault.routerApproval(rando) == RouterApproval.Permit2);
+    assertTrue(ufVault.isAllowedRouter(rando));
+
+    // None removes the router
+    vm.startPrank(admin);
+    vm.expectEmit(true, true, true, true);
+    emit IUniswapFulfillmentVaultEvents.RouterApprovalSet(rando, RouterApproval.None);
+    ufVault.setRouterApproval(rando, RouterApproval.None);
+    vm.stopPrank();
+    assertTrue(ufVault.routerApproval(rando) == RouterApproval.None);
     assertFalse(ufVault.isAllowedRouter(rando));
   }
 
@@ -517,6 +602,158 @@ contract UniswapFulfillmentVaultTest is BaseTest {
   }
 
   // ---------------------------------------------------------------------------------------------
+  // Router approval modes: ERC20 vs Permit2
+  // ---------------------------------------------------------------------------------------------
+
+  function test_fillOrder_erc20Mode_leavesNoStandingAllowance() public {
+    (uint256 index,) = _createOrder(COLLATERAL_AMOUNT);
+    _seedRouterWhype(address(swapRouter), COLLATERAL_AMOUNT);
+
+    // Pull under the bound so an unrevoked approval would leave a remainder
+    _fill(index, 5_000e6, COLLATERAL_AMOUNT);
+
+    _assertNoStandingAllowance(address(swapRouter));
+  }
+
+  function test_fillOrder_permit2Mode_happyPath() public {
+    (uint256 index, uint256 purchaseAmount) = _createOrder(COLLATERAL_AMOUNT);
+    _seedRouterWhype(address(permit2Router), COLLATERAL_AMOUNT);
+
+    uint256 usdxBefore = usdx.balanceOf(address(ufVault));
+    uint256 supplyBefore = ufVault.totalSupply();
+    // Pull under the bound (MAX_USDG_IN) so an unrevoked Permit2 allowance would leave a remainder
+    uint256 amountIn = 5_000e6;
+
+    vm.expectEmit(true, true, false, false);
+    emit IUniswapFulfillmentVaultEvents.OrderFilled(index, address(whype), COLLATERAL_AMOUNT, amountIn, purchaseAmount);
+    _fillVia(address(permit2Router), index, amountIn, COLLATERAL_AMOUNT);
+
+    assertEq(permit2Router.callCount(), 1, "The Permit2 router should have been called once");
+    assertEq(mortgageNFT.ownerOf(1), borrower, "Borrower should have received the mortgage nft");
+    assertApproxEqAbs(
+      usdx.balanceOf(address(ufVault)),
+      usdxBefore + purchaseAmount - amountIn * 1e12,
+      2,
+      "Vault USDX should reflect the fill margin"
+    );
+    assertEq(usdg.balanceOf(address(ufVault)), 0, "Vault should hold no USDG after the fill");
+    assertEq(whype.balanceOf(address(ufVault)), 0, "Vault should hold no collateral after the fill");
+    assertEq(ufVault.totalSupply(), supplyBefore, "Fill should not mint or burn shares");
+
+    // Both legs of the scoped approval are revoked, and the Permit2 allowance is expired past this block
+    _assertNoStandingAllowance(address(permit2Router));
+    (, uint48 expiration,) = permit2.allowance(address(ufVault), address(usdg), address(permit2Router));
+    assertEq(expiration, block.timestamp, "The revoked Permit2 allowance should expire with this block");
+  }
+
+  function test_fillOrder_permit2Mode_overBoundByOne() public {
+    (uint256 index,) = _createOrder(COLLATERAL_AMOUNT);
+    _seedRouterWhype(address(permit2Router), COLLATERAL_AMOUNT);
+
+    // One USDG unit over the bound fails on the scoped Permit2 allowance
+    vm.startPrank(keeper);
+    vm.expectRevert(abi.encodeWithSelector(MockPermit2.InsufficientAllowance.selector, MAX_USDG_IN));
+    ufVault.fillOrder(index, new uint256[](0), address(permit2Router), _swapData(MAX_USDG_IN + 1, COLLATERAL_AMOUNT));
+    vm.stopPrank();
+
+    // The exact bound succeeds
+    _fillVia(address(permit2Router), index, MAX_USDG_IN, COLLATERAL_AMOUNT);
+    _assertNoStandingAllowance(address(permit2Router));
+  }
+
+  function test_fillOrder_permit2Router_revertsInErc20Mode() public {
+    (uint256 index,) = _createOrder(COLLATERAL_AMOUNT);
+    _seedRouterWhype(address(permit2Router), COLLATERAL_AMOUNT);
+    vm.startPrank(admin);
+    ufVault.setRouterApproval(address(permit2Router), RouterApproval.ERC20);
+    vm.stopPrank();
+
+    // A plain approval to the router grants nothing inside Permit2: the never-set allowance reads as expired
+    vm.startPrank(keeper);
+    vm.expectRevert(abi.encodeWithSelector(MockPermit2.AllowanceExpired.selector, 0));
+    ufVault.fillOrder(index, new uint256[](0), address(permit2Router), _swapData(5_000e6, COLLATERAL_AMOUNT));
+    vm.stopPrank();
+  }
+
+  function test_fillOrder_erc20Router_revertsInPermit2Mode() public {
+    (uint256 index,) = _createOrder(COLLATERAL_AMOUNT);
+    _seedRouterWhype(address(swapRouter), COLLATERAL_AMOUNT);
+    vm.startPrank(admin);
+    ufVault.setRouterApproval(address(swapRouter), RouterApproval.Permit2);
+    vm.stopPrank();
+
+    // In Permit2 mode the token approval goes to Permit2, so a direct transferFrom by the router has no allowance
+    vm.startPrank(keeper);
+    vm.expectRevert(
+      abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(swapRouter), 0, 5_000e6)
+    );
+    ufVault.fillOrder(index, new uint256[](0), address(swapRouter), _swapData(5_000e6, COLLATERAL_AMOUNT));
+    vm.stopPrank();
+  }
+
+  function test_fillOrder_revertsOnNoneMode() public {
+    (uint256 index,) = _createOrder(COLLATERAL_AMOUNT);
+    vm.startPrank(admin);
+    ufVault.setRouterApproval(address(permit2Router), RouterApproval.None);
+    vm.stopPrank();
+
+    vm.startPrank(keeper);
+    vm.expectRevert(
+      abi.encodeWithSelector(IUniswapFulfillmentVaultErrors.RouterNotAllowed.selector, address(permit2Router))
+    );
+    ufVault.fillOrder(index, new uint256[](0), address(permit2Router), _swapData(5_000e6, COLLATERAL_AMOUNT));
+    vm.stopPrank();
+    assertEq(permit2Router.callCount(), 0, "A None-mode router should never be called");
+  }
+
+  function test_fillOrder_permit2Mode_routerCannotPullAfterFill() public {
+    (uint256 index,) = _createOrder(COLLATERAL_AMOUNT);
+    _seedRouterWhype(address(permit2Router), COLLATERAL_AMOUNT);
+    _fillVia(address(permit2Router), index, 5_000e6, COLLATERAL_AMOUNT);
+
+    // Give the vault spare USDG and a (hypothetical) leftover token approval to Permit2
+    usdg.mint(address(ufVault), 1e6);
+    vm.startPrank(address(ufVault));
+    usdg.approve(address(permit2), 1e6);
+    vm.stopPrank();
+
+    // Same block: the Permit2 allowance amount was revoked to zero
+    vm.startPrank(address(permit2Router));
+    vm.expectRevert(abi.encodeWithSelector(MockPermit2.InsufficientAllowance.selector, 0));
+    permit2.transferFrom(address(ufVault), address(permit2Router), 1, address(usdg));
+    vm.stopPrank();
+
+    // Any later block: the allowance has expired regardless of amount
+    vm.warp(block.timestamp + 1);
+    vm.startPrank(address(permit2Router));
+    vm.expectRevert(abi.encodeWithSelector(MockPermit2.AllowanceExpired.selector, block.timestamp - 1));
+    permit2.transferFrom(address(ufVault), address(permit2Router), 1, address(usdg));
+    vm.stopPrank();
+  }
+
+  function test_permit2Allowance_expiresAfterCurrentTimestamp() public {
+    // The expiration the vault grants (block.timestamp) is valid for pulls in the same block and dead after it
+    usdg.mint(address(ufVault), 2e6);
+    vm.startPrank(address(ufVault));
+    usdg.approve(address(permit2), 2e6);
+    // forge-lint: disable-next-line(unsafe-typecast)
+    permit2.approve(address(usdg), rando, 2e6, uint48(block.timestamp));
+    vm.stopPrank();
+
+    vm.startPrank(rando);
+    permit2.transferFrom(address(ufVault), rando, 1e6, address(usdg));
+    vm.stopPrank();
+    assertEq(usdg.balanceOf(rando), 1e6, "A same-block pull should succeed");
+
+    uint256 grantedAt = block.timestamp;
+    vm.warp(grantedAt + 1);
+    vm.startPrank(rando);
+    vm.expectRevert(abi.encodeWithSelector(MockPermit2.AllowanceExpired.selector, grantedAt));
+    permit2.transferFrom(address(ufVault), rando, 1e6, address(usdg));
+    vm.stopPrank();
+  }
+
+  // ---------------------------------------------------------------------------------------------
   // Bounds: premium, no-loss gate, maxFillCost
   // ---------------------------------------------------------------------------------------------
 
@@ -619,7 +856,7 @@ contract UniswapFulfillmentVaultTest is BaseTest {
 
     // A router that was allowlisted and then removed
     vm.startPrank(admin);
-    ufVault.setRouterAllowed(address(swapRouter), false);
+    ufVault.setRouterApproval(address(swapRouter), RouterApproval.None);
     vm.stopPrank();
     vm.startPrank(keeper);
     vm.expectRevert(
@@ -682,7 +919,7 @@ contract UniswapFulfillmentVaultTest is BaseTest {
     // Misconfiguration drill: the token itself is allowlisted as a "router", so the swap calldata can move
     // vault USDG beyond the scoped approval. The over-spend invariant still catches it.
     vm.startPrank(admin);
-    ufVault.setRouterAllowed(address(usdg), true);
+    ufVault.setRouterApproval(address(usdg), RouterApproval.ERC20);
     vm.stopPrank();
     usdg.mint(address(ufVault), 100e6);
 
@@ -739,7 +976,7 @@ contract UniswapFulfillmentVaultTest is BaseTest {
   function _setUpReentrantRouter() internal returns (MockReentrantSwapRouter reentrantRouter, uint256 index) {
     reentrantRouter = new MockReentrantSwapRouter();
     vm.startPrank(admin);
-    ufVault.setRouterAllowed(address(reentrantRouter), true);
+    ufVault.setRouterApproval(address(reentrantRouter), RouterApproval.ERC20);
     vm.stopPrank();
     (index,) = _createOrder(COLLATERAL_AMOUNT);
   }
