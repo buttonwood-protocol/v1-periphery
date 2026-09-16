@@ -19,7 +19,7 @@ contract DeployRouterScript is DeployFulfillmentVaultScript {
     console.log("Rollover vault address: %s", address(rolloverVault));
     fulfillmentVault = FulfillmentVault(payable(vm.envAddress("FULFILLMENT_VAULT_ADDRESS")));
     console.log("Fulfillment vault address: %s", address(fulfillmentVault));
-    vm.startBroadcast();
+    startDeployerBroadcast();
     deployRouter();
     // logAddresses();
     vm.stopBroadcast();

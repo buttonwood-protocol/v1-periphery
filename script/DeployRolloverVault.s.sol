@@ -31,7 +31,7 @@ contract DeployRolloverVaultScript is BaseScript {
   }
 
   function run() public virtual override {
-    vm.startBroadcast(deployerPrivateKey);
+    startDeployerBroadcast();
     deployRolloverVault();
     // logAddresses();
     vm.stopBroadcast();

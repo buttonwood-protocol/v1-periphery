@@ -30,7 +30,7 @@ contract DeployFulfillmentVaultScript is DeployRolloverVaultScript {
   }
 
   function run() public virtual override {
-    vm.startBroadcast(deployerPrivateKey);
+    startDeployerBroadcast();
     deployFulfillmentVault();
     // logAddresses();
     vm.stopBroadcast();

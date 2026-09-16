@@ -16,7 +16,7 @@ contract UpgradeFulfillmentVaultScript is BaseScript {
   }
 
   function run() public virtual override {
-    vm.startBroadcast();
+    startDeployerBroadcast();
     upgradeFulfillmentVault();
     vm.stopBroadcast();
   }
