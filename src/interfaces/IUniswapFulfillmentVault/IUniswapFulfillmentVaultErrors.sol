@@ -69,4 +69,10 @@ interface IUniswapFulfillmentVaultErrors {
    * @param usdg The address of the USDG token
    */
   error InvalidUsdg(address usdg);
+
+  /**
+   * @notice Thrown when initializing with an invalid Permit2 address
+   * @param permit2 The address of the Permit2 contract
+   */
+  error InvalidPermit2(address permit2);
 }

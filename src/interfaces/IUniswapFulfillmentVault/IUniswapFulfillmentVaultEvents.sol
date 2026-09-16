@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.20;
 
+import {RouterApproval} from "./RouterApproval.sol";
+
 /**
  * @title IUniswapFulfillmentVaultEvents
  * @author @SocksNFlops
@@ -23,11 +25,11 @@ interface IUniswapFulfillmentVaultEvents {
   event CollateralRouteSet(address indexed collateral, address priceOracle, uint16 maxPremiumBps, uint256 maxFillCost);
 
   /**
-   * @notice Emitted when a swap router is allowed or disallowed.
+   * @notice Emitted when a swap router's approval mode is set (None disallows the router).
    * @param router The address of the router.
-   * @param allowed Whether the router is allowed.
+   * @param approval The approval mode for the router.
    */
-  event RouterAllowedSet(address indexed router, bool allowed);
+  event RouterApprovalSet(address indexed router, RouterApproval approval);
 
   /**
    * @notice Emitted when an order is filled.
