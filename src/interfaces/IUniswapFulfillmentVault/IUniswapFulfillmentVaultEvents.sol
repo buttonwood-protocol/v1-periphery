@@ -16,15 +16,6 @@ interface IUniswapFulfillmentVaultEvents {
   event AssetApproved(address indexed asset);
 
   /**
-   * @notice Emitted when a collateral route is set (or disabled via a zero maxFillCost).
-   * @param collateral The address of the collateral token.
-   * @param priceOracle The address of the price oracle anchoring the route.
-   * @param maxPremiumBps The maximum execution premium over the oracle cost, in basis points.
-   * @param maxFillCost The per-fill cap in oracle terms (18 decimals). Zero disables the route.
-   */
-  event CollateralRouteSet(address indexed collateral, address priceOracle, uint16 maxPremiumBps, uint256 maxFillCost);
-
-  /**
    * @notice Emitted when a swap router's approval mode is set (None disallows the router).
    * @param router The address of the router.
    * @param approval The approval mode for the router.
