@@ -60,7 +60,7 @@ contract DeployUniswapFulfillmentVaultScript is BaseScript {
   }
 
   function run() public virtual override {
-    vm.startBroadcast(deployerPrivateKey);
+    startDeployerBroadcast();
     deployUniswapFulfillmentVault();
     vm.stopBroadcast();
   }

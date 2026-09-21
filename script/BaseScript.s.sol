@@ -17,10 +17,12 @@ contract BaseScript is Script {
   function setUp() public virtual {
     deployerAddress = vm.envAddress("DEPLOYER_ADDRESS");
     console.log("Deployer address: %s", deployerAddress);
-    // deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
+    deployerPrivateKey = vm.envOr("DEPLOYER_PRIVATE_KEY", uint256(0));
     isTest = vm.envBool("IS_TEST");
 
-    // require(deployerAddress == vm.addr(deployerPrivateKey), "Deployer address and private key do not match");
+    if (deployerPrivateKey != 0) {
+      require(deployerAddress == vm.addr(deployerPrivateKey), "Deployer address and private key do not match");
+    }
 
     // Setting up core args
     wrappedNativeTokenAddress = vm.envAddress("WRAPPED_NATIVE_TOKEN_ADDRESS");
@@ -32,8 +34,22 @@ contract BaseScript is Script {
     console.log("Simple oracle address: %s", simpleOracleAddress);
   }
 
+  /**
+   * @notice Starts a broadcast signed by the deployer.
+   * @dev With DEPLOYER_PRIVATE_KEY set, signs with it. With it unset, broadcasts as
+   * DEPLOYER_ADDRESS so the signature comes from the CLI wallet flags
+   * (e.g. --ledger --mnemonic-indexes N); a wallet for a different address fails loudly.
+   */
+  function startDeployerBroadcast() internal {
+    if (deployerPrivateKey != 0) {
+      vm.startBroadcast(deployerPrivateKey);
+    } else {
+      vm.startBroadcast(deployerAddress);
+    }
+  }
+
   function run() public virtual {
-    vm.startBroadcast(deployerPrivateKey);
+    startDeployerBroadcast();
     vm.stopBroadcast();
   }
 }
