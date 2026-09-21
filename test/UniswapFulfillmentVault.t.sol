@@ -15,13 +15,9 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {USDX} from "@core/USDX.sol";
 import {Roles} from "@core/libraries/Roles.sol";
-import {Constants} from "@core/libraries/Constants.sol";
 import {CreationRequest, BaseRequest} from "@core/types/orders/OrderRequests.sol";
 import {ILiquidityVault} from "../src/interfaces/ILiquidityVault/ILiquidityVault.sol";
-import {
-  CollateralRoute,
-  IUniswapFulfillmentVault
-} from "../src/interfaces/IUniswapFulfillmentVault/IUniswapFulfillmentVault.sol";
+import {IUniswapFulfillmentVault} from "../src/interfaces/IUniswapFulfillmentVault/IUniswapFulfillmentVault.sol";
 import {
   IUniswapFulfillmentVaultEvents
 } from "../src/interfaces/IUniswapFulfillmentVault/IUniswapFulfillmentVaultEvents.sol";
@@ -33,7 +29,6 @@ import {UniswapFulfillmentVault} from "../src/UniswapFulfillmentVault.sol";
 import {Router} from "../src/Router.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockPriceOracle} from "./mocks/MockPriceOracle.sol";
-import {MockStalePriceOracle} from "./mocks/MockStalePriceOracle.sol";
 import {MockSwapRouter, MockReentrantSwapRouter} from "./mocks/MockSwapRouter.sol";
 import {MockPermit2, MockPermit2SwapRouter} from "./mocks/MockPermit2.sol";
 
@@ -50,15 +45,14 @@ contract UniswapFulfillmentVaultTest is BaseTest {
   uint8 UFV_DECIMALS = 24;
   uint8 UFV_DECIMALS_OFFSET = 6;
 
-  uint16 ROUTE_PREMIUM_BPS = 50;
-  uint256 ROUTE_MAX_FILL_COST = 1_000_000e18;
   uint256 USER_DEPOSIT = 10_000e18;
   uint256 GAS_FEE = 0.01e18;
   uint256 COLLATERAL_AMOUNT = 100e18;
   uint256 WHYPE_PRICE = 50e18;
-  // anchor = 100 * $50 = $5000; bound = anchor * 1.005 = $5025; purchase = anchor * 1.01 = $5050
-  uint256 ANCHOR_COST = 5_000e18;
-  uint256 MAX_USDG_IN = 5_025e6;
+  // oracle cost = 100 * $50 = $5000; the general manager's 100 bps price spread makes the order's
+  // purchaseAmount $5050, which is the vault's entire spend bound
+  uint256 PURCHASE_AMOUNT = 5_050e18;
+  uint256 MAX_USDG_IN = 5_050e6;
 
   function setUp() public {
     setUpCore();
@@ -75,16 +69,8 @@ contract UniswapFulfillmentVaultTest is BaseTest {
     permit2Router = new MockPermit2SwapRouter(permit2);
     ufVault = _deployVault(address(usdg));
 
-    // Configure the whype route against the mock oracle
+    // The general manager prices orders off this oracle; the vault reads no oracle of its own
     MockPriceOracle(address(whypePriceOracle)).setPrice(WHYPE_PRICE);
-    vm.startPrank(admin);
-    ufVault.setCollateralRoute(
-      address(whype),
-      CollateralRoute({
-        priceOracle: address(whypePriceOracle), maxPremiumBps: ROUTE_PREMIUM_BPS, maxFillCost: ROUTE_MAX_FILL_COST
-      })
-    );
-    vm.stopPrank();
 
     // Prime the vault and fund it with the user's deposit
     _primeVault(ufVault, address(usdg));
@@ -259,11 +245,6 @@ contract UniswapFulfillmentVaultTest is BaseTest {
     assertFalse(ufVault.isAllowedRouter(rando));
     assertTrue(ufVault.hasRole(ufVault.DEFAULT_ADMIN_ROLE(), admin));
     assertFalse(ufVault.paused(), "UniswapFulfillmentVault should not be paused");
-
-    CollateralRoute memory route = ufVault.collateralRoute(address(whype));
-    assertEq(route.priceOracle, address(whypePriceOracle));
-    assertEq(route.maxPremiumBps, ROUTE_PREMIUM_BPS);
-    assertEq(route.maxFillCost, ROUTE_MAX_FILL_COST);
   }
 
   function test_initialize_revertsOnZeroUsdg() public {
@@ -361,72 +342,6 @@ contract UniswapFulfillmentVaultTest is BaseTest {
   // ---------------------------------------------------------------------------------------------
   // Admin configuration
   // ---------------------------------------------------------------------------------------------
-
-  function test_setCollateralRoute_revertsWhenNotAdmin(address caller) public {
-    vm.assume(ufVault.hasRole(ufVault.DEFAULT_ADMIN_ROLE(), caller) == false);
-
-    vm.startPrank(caller);
-    vm.expectRevert(
-      abi.encodeWithSelector(
-        IAccessControl.AccessControlUnauthorizedAccount.selector, caller, ufVault.DEFAULT_ADMIN_ROLE()
-      )
-    );
-    ufVault.setCollateralRoute(
-      address(ubtc), CollateralRoute({priceOracle: address(ubtcPriceOracle), maxPremiumBps: 50, maxFillCost: 1e18})
-    );
-    vm.stopPrank();
-  }
-
-  function test_setCollateralRoute_revertsOnZeroOracle() public {
-    vm.startPrank(admin);
-    vm.expectRevert(
-      abi.encodeWithSelector(IUniswapFulfillmentVaultErrors.InvalidCollateralRoute.selector, address(ubtc))
-    );
-    ufVault.setCollateralRoute(
-      address(ubtc), CollateralRoute({priceOracle: address(0), maxPremiumBps: 50, maxFillCost: 1e18})
-    );
-    vm.stopPrank();
-  }
-
-  function test_setCollateralRoute_revertsOnPremiumAtOrAboveBps(uint16 premiumBps) public {
-    premiumBps = uint16(bound(premiumBps, Constants.BPS, type(uint16).max));
-
-    vm.startPrank(admin);
-    vm.expectRevert(
-      abi.encodeWithSelector(IUniswapFulfillmentVaultErrors.InvalidCollateralRoute.selector, address(ubtc))
-    );
-    ufVault.setCollateralRoute(
-      address(ubtc),
-      CollateralRoute({priceOracle: address(ubtcPriceOracle), maxPremiumBps: premiumBps, maxFillCost: 1e18})
-    );
-    vm.stopPrank();
-  }
-
-  function test_setCollateralRoute_setAndDisable() public {
-    // Set the route and validate the view round-trips
-    vm.startPrank(admin);
-    vm.expectEmit(true, true, true, true);
-    emit IUniswapFulfillmentVaultEvents.CollateralRouteSet(address(ubtc), address(ubtcPriceOracle), 25, 500e18);
-    ufVault.setCollateralRoute(
-      address(ubtc), CollateralRoute({priceOracle: address(ubtcPriceOracle), maxPremiumBps: 25, maxFillCost: 500e18})
-    );
-    vm.stopPrank();
-
-    CollateralRoute memory route = ufVault.collateralRoute(address(ubtc));
-    assertEq(route.priceOracle, address(ubtcPriceOracle));
-    assertEq(route.maxPremiumBps, 25);
-    assertEq(route.maxFillCost, 500e18);
-
-    // Disabling with a zero maxFillCost skips oracle/premium validation
-    vm.startPrank(admin);
-    ufVault.setCollateralRoute(
-      address(ubtc), CollateralRoute({priceOracle: address(0), maxPremiumBps: 0, maxFillCost: 0})
-    );
-    vm.stopPrank();
-
-    route = ufVault.collateralRoute(address(ubtc));
-    assertEq(route.maxFillCost, 0);
-  }
 
   function test_setRouterApproval_revertsWhenNotAdmin(address caller, uint8 approvalSeed) public {
     vm.assume(ufVault.hasRole(ufVault.DEFAULT_ADMIN_ROLE(), caller) == false);
@@ -706,6 +621,27 @@ contract UniswapFulfillmentVaultTest is BaseTest {
     assertEq(permit2Router.callCount(), 0, "A None-mode router should never be called");
   }
 
+  function test_fillOrder_revertsOnDisallowedRouter() public {
+    (uint256 index,) = _createOrder(COLLATERAL_AMOUNT);
+
+    // A router that was never allowlisted
+    vm.startPrank(keeper);
+    vm.expectRevert(abi.encodeWithSelector(IUniswapFulfillmentVaultErrors.RouterNotAllowed.selector, rando));
+    ufVault.fillOrder(index, new uint256[](0), rando, _swapData(5_000e6, COLLATERAL_AMOUNT));
+    vm.stopPrank();
+
+    // A router that was allowlisted and then removed
+    vm.startPrank(admin);
+    ufVault.setRouterApproval(address(swapRouter), RouterApproval.None);
+    vm.stopPrank();
+    vm.startPrank(keeper);
+    vm.expectRevert(
+      abi.encodeWithSelector(IUniswapFulfillmentVaultErrors.RouterNotAllowed.selector, address(swapRouter))
+    );
+    ufVault.fillOrder(index, new uint256[](0), address(swapRouter), _swapData(5_000e6, COLLATERAL_AMOUNT));
+    vm.stopPrank();
+  }
+
   function test_fillOrder_permit2Mode_routerCannotPullAfterFill() public {
     (uint256 index,) = _createOrder(COLLATERAL_AMOUNT);
     _seedRouterWhype(address(permit2Router), COLLATERAL_AMOUNT);
@@ -754,31 +690,15 @@ contract UniswapFulfillmentVaultTest is BaseTest {
   }
 
   // ---------------------------------------------------------------------------------------------
-  // Bounds: premium, no-loss gate, maxFillCost
+  // The spend bound: the order's purchase amount
   // ---------------------------------------------------------------------------------------------
 
-  function test_fillOrder_premiumBoundary_exact() public {
+  function test_fillOrder_boundIsThePurchaseAmount() public {
     (uint256 index, uint256 purchaseAmount) = _createOrder(COLLATERAL_AMOUNT);
+    assertEq(purchaseAmount, PURCHASE_AMOUNT, "The order should be priced at the oracle cost plus the price spread");
     _seedRouterWhype(address(swapRouter), COLLATERAL_AMOUNT);
 
-    uint256 usdxBefore = usdx.balanceOf(address(ufVault));
-
-    // Pull exactly the oracle-anchored bound
-    _fill(index, MAX_USDG_IN, COLLATERAL_AMOUNT);
-
-    assertApproxEqAbs(
-      usdx.balanceOf(address(ufVault)),
-      usdxBefore + purchaseAmount - MAX_USDG_IN * 1e12,
-      2,
-      "Fill at the exact bound should succeed"
-    );
-  }
-
-  function test_fillOrder_premiumBoundary_overByOne() public {
-    (uint256 index,) = _createOrder(COLLATERAL_AMOUNT);
-    _seedRouterWhype(address(swapRouter), COLLATERAL_AMOUNT);
-
-    // One USDG unit over the bound fails on the scoped approval
+    // One USDG unit over the purchase amount starves on the scoped approval
     vm.startPrank(keeper);
     vm.expectRevert(
       abi.encodeWithSelector(
@@ -787,101 +707,37 @@ contract UniswapFulfillmentVaultTest is BaseTest {
     );
     ufVault.fillOrder(index, new uint256[](0), address(swapRouter), _swapData(MAX_USDG_IN + 1, COLLATERAL_AMOUNT));
     vm.stopPrank();
+
+    // Spending exactly the purchase amount is breakeven: the fill returns what it cost
+    uint256 usdxBefore = usdx.balanceOf(address(ufVault));
+    _fill(index, MAX_USDG_IN, COLLATERAL_AMOUNT);
+    assertApproxEqAbs(
+      usdx.balanceOf(address(ufVault)), usdxBefore, 2, "A fill at the bound should leave the vault's USDX whole"
+    );
+    assertEq(usdg.balanceOf(address(ufVault)), 0, "Vault should hold no USDG after the fill");
   }
 
-  function test_fillOrder_noLossGate() public {
-    // Order created at $50; price then rises so the premium bound exceeds the purchase amount
+  function test_fillOrder_boundTracksTheOrder_notTheLivePrice() public {
+    // The bound is fixed at order creation: a price move afterwards moves neither the bound nor the fill
     (uint256 index, uint256 purchaseAmount) = _createOrder(COLLATERAL_AMOUNT);
     MockPriceOracle(address(whypePriceOracle)).setPrice(60e18);
     _seedRouterWhype(address(swapRouter), COLLATERAL_AMOUNT);
 
-    // anchor = $6000, premium bound = $6030, purchaseAmount = $5050 -> the gate binds at purchaseAmount
-    uint256 gateUsdgIn = purchaseAmount / 1e12;
+    uint256 boundUsdgIn = purchaseAmount / 1e12;
+    assertEq(boundUsdgIn, MAX_USDG_IN, "The bound should still be the original purchase amount");
 
-    // One unit over the gate fails on the scoped approval
     vm.startPrank(keeper);
     vm.expectRevert(
       abi.encodeWithSelector(
-        IERC20Errors.ERC20InsufficientAllowance.selector, address(swapRouter), gateUsdgIn, gateUsdgIn + 1
+        IERC20Errors.ERC20InsufficientAllowance.selector, address(swapRouter), boundUsdgIn, boundUsdgIn + 1
       )
     );
-    ufVault.fillOrder(index, new uint256[](0), address(swapRouter), _swapData(gateUsdgIn + 1, COLLATERAL_AMOUNT));
+    ufVault.fillOrder(index, new uint256[](0), address(swapRouter), _swapData(boundUsdgIn + 1, COLLATERAL_AMOUNT));
     vm.stopPrank();
 
-    // At the gate the fill is breakeven (modulo USDX share rounding)
     uint256 usdxBefore = usdx.balanceOf(address(ufVault));
-    _fill(index, gateUsdgIn, COLLATERAL_AMOUNT);
-    assertApproxEqAbs(
-      usdx.balanceOf(address(ufVault)), usdxBefore, 2, "The no-loss gate should cap the spend at the purchase amount"
-    );
-  }
-
-  function test_fillOrder_revertsOnFillTooLarge() public {
-    (uint256 index,) = _createOrder(COLLATERAL_AMOUNT);
-    vm.startPrank(admin);
-    ufVault.setCollateralRoute(
-      address(whype),
-      CollateralRoute({priceOracle: address(whypePriceOracle), maxPremiumBps: ROUTE_PREMIUM_BPS, maxFillCost: 4_000e18})
-    );
-    vm.stopPrank();
-
-    vm.startPrank(keeper);
-    vm.expectRevert(abi.encodeWithSelector(IUniswapFulfillmentVaultErrors.FillTooLarge.selector, ANCHOR_COST, 4_000e18));
-    ufVault.fillOrder(index, new uint256[](0), address(swapRouter), _swapData(5_000e6, COLLATERAL_AMOUNT));
-    vm.stopPrank();
-  }
-
-  function test_fillOrder_revertsOnDisabledRoute() public {
-    (uint256 index,) = _createOrder(COLLATERAL_AMOUNT);
-    vm.startPrank(admin);
-    ufVault.setCollateralRoute(
-      address(whype), CollateralRoute({priceOracle: address(0), maxPremiumBps: 0, maxFillCost: 0})
-    );
-    vm.stopPrank();
-
-    vm.startPrank(keeper);
-    vm.expectRevert(abi.encodeWithSelector(IUniswapFulfillmentVaultErrors.RouteNotConfigured.selector, address(whype)));
-    ufVault.fillOrder(index, new uint256[](0), address(swapRouter), _swapData(5_000e6, COLLATERAL_AMOUNT));
-    vm.stopPrank();
-  }
-
-  function test_fillOrder_revertsOnDisallowedRouter() public {
-    (uint256 index,) = _createOrder(COLLATERAL_AMOUNT);
-
-    // A router that was never allowlisted
-    vm.startPrank(keeper);
-    vm.expectRevert(abi.encodeWithSelector(IUniswapFulfillmentVaultErrors.RouterNotAllowed.selector, rando));
-    ufVault.fillOrder(index, new uint256[](0), rando, _swapData(5_000e6, COLLATERAL_AMOUNT));
-    vm.stopPrank();
-
-    // A router that was allowlisted and then removed
-    vm.startPrank(admin);
-    ufVault.setRouterApproval(address(swapRouter), RouterApproval.None);
-    vm.stopPrank();
-    vm.startPrank(keeper);
-    vm.expectRevert(
-      abi.encodeWithSelector(IUniswapFulfillmentVaultErrors.RouterNotAllowed.selector, address(swapRouter))
-    );
-    ufVault.fillOrder(index, new uint256[](0), address(swapRouter), _swapData(5_000e6, COLLATERAL_AMOUNT));
-    vm.stopPrank();
-  }
-
-  function test_fillOrder_staleOracleFailsClosed() public {
-    (uint256 index,) = _createOrder(COLLATERAL_AMOUNT);
-    MockStalePriceOracle staleOracle = new MockStalePriceOracle(18);
-    vm.startPrank(admin);
-    ufVault.setCollateralRoute(
-      address(whype),
-      CollateralRoute({
-        priceOracle: address(staleOracle), maxPremiumBps: ROUTE_PREMIUM_BPS, maxFillCost: ROUTE_MAX_FILL_COST
-      })
-    );
-    vm.stopPrank();
-
-    vm.startPrank(keeper);
-    vm.expectRevert(abi.encodeWithSelector(MockStalePriceOracle.StalePrice.selector, 2 days, 1 days));
-    ufVault.fillOrder(index, new uint256[](0), address(swapRouter), _swapData(5_000e6, COLLATERAL_AMOUNT));
-    vm.stopPrank();
+    _fill(index, boundUsdgIn, COLLATERAL_AMOUNT);
+    assertApproxEqAbs(usdx.balanceOf(address(ufVault)), usdxBefore, 2, "The fill should still be breakeven");
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -917,7 +773,7 @@ contract UniswapFulfillmentVaultTest is BaseTest {
     (uint256 index,) = _createOrder(COLLATERAL_AMOUNT);
 
     // Misconfiguration drill: the token itself is allowlisted as a "router", so the swap calldata can move
-    // vault USDG beyond the scoped approval. The over-spend invariant still catches it.
+    // vault USDG beyond the scoped approval. The over-spend invariant still catches it at the purchase amount.
     vm.startPrank(admin);
     ufVault.setRouterApproval(address(usdg), RouterApproval.ERC20);
     vm.stopPrank();
@@ -1032,13 +888,8 @@ contract UniswapFulfillmentVaultTest is BaseTest {
     (uint256 index, uint256 purchaseAmount) = _createOrder(collateralAmount);
     _seedRouterWhype(address(swapRouter), collateralAmount);
 
-    // Recompute the bound the way the vault does: oracle anchor, premium, no-loss gate, floor to USDG units
-    uint256 anchorCost = Math.mulDiv(collateralAmount, price, 1e18);
-    uint256 maxCost = Math.mulDiv(anchorCost, Constants.BPS + ROUTE_PREMIUM_BPS, Constants.BPS);
-    if (maxCost > purchaseAmount) {
-      maxCost = purchaseAmount;
-    }
-    uint256 expectedMaxUsdgIn = maxCost / 1e12;
+    // The bound is the order's own purchase amount, floored to USDG units
+    uint256 expectedMaxUsdgIn = purchaseAmount / 1e12;
 
     // One USDG unit over the bound fails on the scoped approval
     vm.startPrank(keeper);
@@ -1070,21 +921,13 @@ contract UniswapFulfillmentVaultTest is BaseTest {
     vm.stopPrank();
 
     UniswapFulfillmentVault vault12 = _deployVault(address(usdg12));
-    vm.startPrank(admin);
-    vault12.setCollateralRoute(
-      address(whype),
-      CollateralRoute({
-        priceOracle: address(whypePriceOracle), maxPremiumBps: ROUTE_PREMIUM_BPS, maxFillCost: ROUTE_MAX_FILL_COST
-      })
-    );
-    vm.stopPrank();
     _depositToVault(vault12, address(usdg12), user, USER_DEPOSIT);
 
     (uint256 index, uint256 purchaseAmount) = _createOrder(COLLATERAL_AMOUNT);
     _seedRouterWhype(address(swapRouter), COLLATERAL_AMOUNT);
 
-    // bound = $5025 in 12-decimal units
-    uint256 maxUsdgIn = 5_025e18 / 1e6;
+    // bound = the $5050 purchase amount in 12-decimal units
+    uint256 maxUsdgIn = purchaseAmount / 1e6;
     uint256 usdxBefore = usdx.balanceOf(address(vault12));
 
     vm.startPrank(keeper);
@@ -1104,6 +947,62 @@ contract UniswapFulfillmentVaultTest is BaseTest {
       usdxBefore + purchaseAmount - maxUsdgIn * 1e6,
       2,
       "Vault USDX should reflect the 12-decimal scalar conversion"
+    );
+  }
+
+  /// forge-config: default.fuzz.runs = 24
+  function test_fillOrder_boundIsPurchaseAmountUnderAnyScalar_fuzz(uint8 usdgDecimals) public {
+    // Any USD-leg decimals: the bound is always the purchase amount pushed through USDX's scalars
+    usdgDecimals = uint8(bound(usdgDecimals, 2, 18));
+    uint256 numerator = 10 ** (18 - uint256(usdgDecimals));
+    MockERC20 usdgN = new MockERC20("Global Dollar N", "USDGN", usdgDecimals);
+    vm.startPrank(admin);
+    USDX(address(usdx)).addSupportedToken(address(usdgN), numerator, 1);
+    vm.stopPrank();
+
+    UniswapFulfillmentVault vaultN = _deployVault(address(usdgN));
+    _depositToVault(vaultN, address(usdgN), user, USER_DEPOSIT);
+
+    (uint256 index, uint256 purchaseAmount) = _createOrder(COLLATERAL_AMOUNT);
+    _seedRouterWhype(address(swapRouter), COLLATERAL_AMOUNT);
+    uint256 expectedMaxIn = purchaseAmount / numerator;
+
+    // One unit over the converted bound starves on the scoped approval
+    vm.startPrank(keeper);
+    vm.expectRevert(
+      abi.encodeWithSelector(
+        IERC20Errors.ERC20InsufficientAllowance.selector, address(swapRouter), expectedMaxIn, expectedMaxIn + 1
+      )
+    );
+    vaultN.fillOrder(
+      index,
+      new uint256[](0),
+      address(swapRouter),
+      abi.encodeCall(
+        MockSwapRouter.swap, (IERC20(address(usdgN)), expectedMaxIn + 1, IERC20(address(whype)), COLLATERAL_AMOUNT)
+      )
+    );
+    vm.stopPrank();
+
+    // The converted bound itself is spendable and the accounting is whole
+    uint256 usdxBefore = usdx.balanceOf(address(vaultN));
+    vm.startPrank(keeper);
+    vaultN.fillOrder(
+      index,
+      new uint256[](0),
+      address(swapRouter),
+      abi.encodeCall(
+        MockSwapRouter.swap, (IERC20(address(usdgN)), expectedMaxIn, IERC20(address(whype)), COLLATERAL_AMOUNT)
+      )
+    );
+    vm.stopPrank();
+
+    assertEq(usdgN.balanceOf(address(vaultN)), 0, "Vault should hold no USD-leg token after the fill");
+    assertApproxEqAbs(
+      usdx.balanceOf(address(vaultN)),
+      usdxBefore + purchaseAmount - expectedMaxIn * numerator,
+      2,
+      "Vault USDX should reflect exactly the scalar-converted spend and the purchase amount received"
     );
   }
 }

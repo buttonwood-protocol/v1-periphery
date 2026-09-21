@@ -96,8 +96,8 @@ contract DeployUniswapFulfillmentVaultScript is BaseScript {
     uniswapFulfillmentVault.grantRole(uniswapFulfillmentVault.WHITELIST_ROLE(), uniswapFulfillmentVaultAdminAddress);
 
     // Post-deploy grants executed by the maintainer: the order pool's FULFILLMENT_ROLE and USDX's
-    // IGNORE_CAP_ROLE (for the leftover-USDG redeposit) both go to the vault, then per-collateral
-    // setCollateralRoute and approveAssetToOrderPool calls.
+    // IGNORE_CAP_ROLE (for the leftover-USDG redeposit) both go to the vault, then a per-collateral
+    // approveAssetToOrderPool call.
   }
 
   function logUniswapFulfillmentVault(string memory objectKey) public returns (string memory json) {
