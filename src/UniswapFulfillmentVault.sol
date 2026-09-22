@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.20;
 
-import {
-  CollateralRoute,
-  IUniswapFulfillmentVault
-} from "./interfaces/IUniswapFulfillmentVault/IUniswapFulfillmentVault.sol";
+import {IUniswapFulfillmentVault} from "./interfaces/IUniswapFulfillmentVault/IUniswapFulfillmentVault.sol";
 import {RouterApproval, RouterConfig} from "./interfaces/IUniswapFulfillmentVault/RouterApproval.sol";
 import {IERC165, LiquidityVault} from "./LiquidityVault.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
@@ -16,9 +13,7 @@ import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/ut
 import {IUSDX} from "@core/interfaces/IUSDX/IUSDX.sol";
 import {IOrderPool} from "@core/interfaces/IOrderPool/IOrderPool.sol";
 import {IGeneralManager} from "@core/interfaces/IGeneralManager/IGeneralManager.sol";
-import {IPriceOracle} from "@core/interfaces/IPriceOracle.sol";
 import {PurchaseOrder} from "@core/types/orders/PurchaseOrder.sol";
-import {Constants} from "@core/libraries/Constants.sol";
 
 /**
  * @title IAllowanceTransfer
@@ -41,8 +36,10 @@ interface IAllowanceTransfer {
  * @author @SocksNFlops
  * @notice A fulfillment vault for chains whose venue is synchronously composable. Each fill is a single
  *         atomic transaction: withdraw USDG from USDX, execute keeper-supplied swap calldata against an
- *         allowlisted router under oracle-anchored balance-delta invariants, and deliver the collateral to
- *         the order pool. The vault never constructs swaps; safety comes from the invariants, not the route.
+ *         allowlisted router under balance-delta invariants, and deliver the collateral to the order pool.
+ *         The vault never constructs swaps; safety comes from the invariants, not the route. The spend bound
+ *         is the order's own purchase amount, which the general manager priced at order creation and pays
+ *         back to the vault on fulfillment, so a fill can never cost the vault more than it returns.
  */
 contract UniswapFulfillmentVault is LiquidityVault, ReentrancyGuardUpgradeable, IUniswapFulfillmentVault {
   using Math for uint256;
@@ -60,7 +57,6 @@ contract UniswapFulfillmentVault is LiquidityVault, ReentrancyGuardUpgradeable, 
    * @param _usdx The address of the USDX token
    * @param _usdg The address of the USDG token (the USDX supported token used for the swap leg)
    * @param _permit2 The address of the Permit2 contract used for Permit2-mode routers
-   * @param _routes The oracle-anchored fill bounds per collateral
    * @param _routerApprovals The swap router allowlist, keyed by approval mode (None is not allowed)
    */
   struct UniswapFulfillmentVaultStorage {
@@ -68,7 +64,6 @@ contract UniswapFulfillmentVault is LiquidityVault, ReentrancyGuardUpgradeable, 
     address _usdx;
     address _usdg;
     address _permit2;
-    mapping(address collateral => CollateralRoute route) _routes;
     mapping(address router => RouterApproval approval) _routerApprovals;
   }
 
@@ -224,11 +219,6 @@ contract UniswapFulfillmentVault is LiquidityVault, ReentrancyGuardUpgradeable, 
   }
 
   /// @inheritdoc IUniswapFulfillmentVault
-  function collateralRoute(address collateral) public view override returns (CollateralRoute memory) {
-    return _getUniswapFulfillmentVaultStorage()._routes[collateral];
-  }
-
-  /// @inheritdoc IUniswapFulfillmentVault
   function permit2() public view override returns (address) {
     return _getUniswapFulfillmentVaultStorage()._permit2;
   }
@@ -241,20 +231,6 @@ contract UniswapFulfillmentVault is LiquidityVault, ReentrancyGuardUpgradeable, 
   /// @inheritdoc IUniswapFulfillmentVault
   function isAllowedRouter(address router) public view override returns (bool) {
     return _getUniswapFulfillmentVaultStorage()._routerApprovals[router] != RouterApproval.None;
-  }
-
-  /// @inheritdoc IUniswapFulfillmentVault
-  function setCollateralRoute(address collateral, CollateralRoute calldata route)
-    external
-    override
-    onlyRole(DEFAULT_ADMIN_ROLE)
-  {
-    // An enabled route needs a real oracle and a premium strictly below 100%
-    if (route.maxFillCost != 0 && (route.priceOracle == address(0) || route.maxPremiumBps >= Constants.BPS)) {
-      revert InvalidCollateralRoute(collateral);
-    }
-    emit CollateralRouteSet(collateral, route.priceOracle, route.maxPremiumBps, route.maxFillCost);
-    _getUniswapFulfillmentVaultStorage()._routes[collateral] = route;
   }
 
   /// @inheritdoc IUniswapFulfillmentVault
@@ -342,8 +318,8 @@ contract UniswapFulfillmentVault is LiquidityVault, ReentrancyGuardUpgradeable, 
 
   /**
    * @dev Withdraws USDG from USDX, executes the keeper-supplied swap calldata under a scoped approval, and
-   *      enforces the oracle-anchored balance-delta invariants. Leftover USDG is redeposited into USDX so
-   *      total assets are whole USDX again by the end of the transaction.
+   *      enforces the balance-delta invariants. Leftover USDG is redeposited into USDX so total assets are
+   *      whole USDX again by the end of the transaction.
    * @param collateral The address of the collateral token
    * @param collateralNeeded The amount of collateral the order requires
    * @param purchaseAmount The amount of USDX the fill will return (the no-loss bound)
@@ -361,43 +337,22 @@ contract UniswapFulfillmentVault is LiquidityVault, ReentrancyGuardUpgradeable, 
     if (_getUniswapFulfillmentVaultStorage()._routerApprovals[router] == RouterApproval.None) {
       revert RouterNotAllowed(router);
     }
-    uint256 maxUsdgIn = _withdrawBoundedSwapInput(collateral, collateralNeeded, purchaseAmount);
+    uint256 maxUsdgIn = _withdrawBoundedSwapInput(purchaseAmount);
     usdgSpent = _executeSwap(collateral, collateralNeeded, maxUsdgIn, router, swapCalldata);
   }
 
   /**
-   * @dev Computes the oracle-anchored spend bound for a fill and withdraws it from USDX as USDG
-   * @param collateral The address of the collateral token
-   * @param collateralNeeded The amount of collateral the order requires
-   * @param purchaseAmount The amount of USDX the fill will return (the no-loss bound)
+   * @dev Withdraws the fill's spend bound from USDX as USDG. The bound is the order's purchase amount: the
+   *      general manager priced it with its own oracle at order creation, net of fees, and pays exactly it
+   *      back to the vault on fulfillment, so spending no more than it is the no-loss gate.
+   * @param purchaseAmount The amount of USDX the fill will return (18 decimals)
    * @return maxUsdgIn The maximum amount of USDG the swap may consume
    */
-  function _withdrawBoundedSwapInput(address collateral, uint256 collateralNeeded, uint256 purchaseAmount)
-    internal
-    returns (uint256 maxUsdgIn)
-  {
+  function _withdrawBoundedSwapInput(uint256 purchaseAmount) internal returns (uint256 maxUsdgIn) {
     UniswapFulfillmentVaultStorage storage $ = _getUniswapFulfillmentVaultStorage();
-    CollateralRoute memory route = $._routes[collateral];
-    if (route.maxFillCost == 0) {
-      revert RouteNotConfigured(collateral);
-    }
-
-    // Oracle anchor. A stale oracle reverts here, so fills fail closed on a dead feed.
-    (uint256 anchorCost,) = IPriceOracle(route.priceOracle).cost(collateralNeeded);
-    if (anchorCost > route.maxFillCost) {
-      revert FillTooLarge(anchorCost, route.maxFillCost);
-    }
-
-    // The swap may not consume more USD value than the oracle cost plus the configured premium, and never
-    // more than the fill returns (no-loss gate)
-    uint256 maxCost = anchorCost.mulDiv(Constants.BPS + route.maxPremiumBps, Constants.BPS);
-    if (maxCost > purchaseAmount) {
-      maxCost = purchaseAmount;
-    }
-
     // Convert the 18-decimal bound to USDG units, rounding down
     (uint256 numerator, uint256 denominator) = IUSDX($._usdx).tokenScalars($._usdg);
-    maxUsdgIn = maxCost.mulDiv(denominator, numerator);
+    maxUsdgIn = purchaseAmount.mulDiv(denominator, numerator);
     if (maxUsdgIn > 0) {
       IUSDX($._usdx).withdraw($._usdg, maxUsdgIn);
     }

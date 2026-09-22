@@ -7,18 +7,12 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {USDX} from "@core/USDX.sol";
 import {SubConsol} from "@core/SubConsol.sol";
 import {ChainlinkPriceOracle} from "@core/ChainlinkPriceOracle.sol";
-import {IPriceOracle} from "@core/interfaces/IPriceOracle.sol";
 import {Roles} from "@core/libraries/Roles.sol";
 import {Constants} from "@core/libraries/Constants.sol";
 import {CreationRequest, BaseRequest} from "@core/types/orders/OrderRequests.sol";
-import {
-  CollateralRoute,
-  IUniswapFulfillmentVault
-} from "../../src/interfaces/IUniswapFulfillmentVault/IUniswapFulfillmentVault.sol";
 import {
   IUniswapFulfillmentVaultEvents
 } from "../../src/interfaces/IUniswapFulfillmentVault/IUniswapFulfillmentVaultEvents.sol";
@@ -92,9 +86,9 @@ struct V4ExactOutputSingleParams {
 
 /**
  * @title UniswapFulfillmentVaultForkTest
- * @notice End-to-end fills against live Robinhood Chain (4663) state: real USDG, real NVDA and SPY, the real
- *         Chainlink feeds through the ChainlinkPriceOracle adapter, the real SwapRouter02 (ERC20 mode), and the
- *         real Universal Router with Permit2 (Permit2 mode) over v3 and v4 pools.
+ * @notice End-to-end fills against live Robinhood Chain (4663) state: real USDG, real NVDA and SPY, orders
+ *         priced by the real Chainlink feeds through the general manager, the real SwapRouter02 (ERC20 mode),
+ *         and the real Universal Router with Permit2 (Permit2 mode) over v3 and v4 pools.
  * @dev Network-gated: the default suite skips these tests so CI stays network-free. Run with
  *      `RUN_FORK_TESTS=true forge test --match-path test/fork/UniswapFulfillmentVault.fork.t.sol`
  */
@@ -131,10 +125,6 @@ contract UniswapFulfillmentVaultForkTest is BaseTest {
   uint8 constant V4_TAKE_ALL = 0x0f;
 
   uint256 constant FEED_MAX_AGE = 7 days;
-  uint16 constant ROUTE_PREMIUM_BPS = 50;
-  // The SPY v4 pool charges 0.30% and sat ~0.17% above the feed at the fork block, so 50 bps leaves no margin
-  uint16 constant SPY_ROUTE_PREMIUM_BPS = 100;
-  uint256 constant ROUTE_MAX_FILL_COST = 1_000_000e18;
   uint256 constant COLLATERAL_AMOUNT = 0.05e18; // ~ $10 of NVDA: negligible pool impact
   uint256 constant SPY_COLLATERAL_AMOUNT = 0.015e18; // ~ $11 of SPY: negligible pool impact
   uint256 constant USER_DEPOSIT = 1_000e18;
@@ -222,18 +212,6 @@ contract UniswapFulfillmentVaultForkTest is BaseTest {
     ufVault.grantRole(ufVault.KEEPER_ROLE(), keeper);
     IAccessControl(address(orderPool)).grantRole(Roles.FULFILLMENT_ROLE, address(ufVault));
     IAccessControl(address(usdx)).grantRole(Roles.IGNORE_CAP_ROLE, address(ufVault));
-    ufVault.setCollateralRoute(
-      NVDA_ADDRESS,
-      CollateralRoute({
-        priceOracle: address(nvdaChainlinkOracle), maxPremiumBps: ROUTE_PREMIUM_BPS, maxFillCost: ROUTE_MAX_FILL_COST
-      })
-    );
-    ufVault.setCollateralRoute(
-      SPY_ADDRESS,
-      CollateralRoute({
-        priceOracle: address(spyChainlinkOracle), maxPremiumBps: SPY_ROUTE_PREMIUM_BPS, maxFillCost: ROUTE_MAX_FILL_COST
-      })
-    );
     vm.stopPrank();
     ufVault.approveAssetToOrderPool(NVDA_ADDRESS);
     ufVault.approveAssetToOrderPool(SPY_ADDRESS);
@@ -346,24 +324,9 @@ contract UniswapFulfillmentVaultForkTest is BaseTest {
     purchaseAmount = orderPool.orders(index).orderAmounts.purchaseAmount;
   }
 
-  /// @dev Recomputes the vault's NVDA spend bound
-  function _computeMaxUsdgIn(uint256 collateralNeeded, uint256 purchaseAmount) internal view returns (uint256) {
-    return _computeMaxUsdgInFor(NVDA_ADDRESS, collateralNeeded, purchaseAmount);
-  }
-
-  /// @dev Recomputes the vault's spend bound (anchor, premium, no-loss gate, floor to USDG units)
-  function _computeMaxUsdgInFor(address collateral, uint256 collateralNeeded, uint256 purchaseAmount)
-    internal
-    view
-    returns (uint256)
-  {
-    CollateralRoute memory route = ufVault.collateralRoute(collateral);
-    (uint256 anchorCost,) = IPriceOracle(route.priceOracle).cost(collateralNeeded);
-    uint256 maxCost = Math.mulDiv(anchorCost, Constants.BPS + route.maxPremiumBps, Constants.BPS);
-    if (maxCost > purchaseAmount) {
-      maxCost = purchaseAmount;
-    }
-    return maxCost / 1e12;
+  /// @dev Recomputes the vault's spend bound: the order's purchase amount, floored to 6-decimal USDG units
+  function _maxUsdgIn(uint256 purchaseAmount) internal pure returns (uint256) {
+    return purchaseAmount / 1e12;
   }
 
   /// @dev Encodes real SwapRouter02 exactOutputSingle calldata for the keeper leg
@@ -464,7 +427,7 @@ contract UniswapFulfillmentVaultForkTest is BaseTest {
     }
 
     (uint256 index, uint256 purchaseAmount) = _createOrder(COLLATERAL_AMOUNT, block.timestamp + 10 minutes);
-    uint256 maxUsdgIn = _computeMaxUsdgIn(COLLATERAL_AMOUNT, purchaseAmount);
+    uint256 maxUsdgIn = _maxUsdgIn(purchaseAmount);
     uint256 usdxBefore = usdx.balanceOf(address(ufVault));
 
     vm.expectEmit(true, true, false, false);
@@ -477,59 +440,33 @@ contract UniswapFulfillmentVaultForkTest is BaseTest {
     _assertNoStandingAllowance(SWAP_ROUTER02_ADDRESS);
   }
 
-  function test_fork_fillOrder_boundConstrainsRealSwap() public {
+  function test_fork_fillOrder_purchaseAmountBoundBlocksALossyFill() public {
     if (!forkEnabled) {
       vm.skip(true);
     }
 
-    (uint256 index, uint256 purchaseAmount) = _createOrder(COLLATERAL_AMOUNT, block.timestamp + 10 minutes);
-
-    // Re-anchor the route to an oracle reporting half the real price: the vault's bound (and scoped
-    // approval) lands well below what the live pool charges, so the real swap cannot complete
+    // Price the order off an oracle reporting half the live feed, so the order's purchaseAmount - the
+    // vault's entire spend bound - lands far below what the live pool charges for the same NVDA
     MockPriceOracle lowOracle = new MockPriceOracle(18);
     lowOracle.setPrice(nvdaChainlinkOracle.price() / 2);
     vm.startPrank(admin);
-    ufVault.setCollateralRoute(
-      NVDA_ADDRESS,
-      CollateralRoute({
-        priceOracle: address(lowOracle), maxPremiumBps: ROUTE_PREMIUM_BPS, maxFillCost: ROUTE_MAX_FILL_COST
-      })
-    );
+    generalManager.setPriceOracle(NVDA_ADDRESS, address(lowOracle));
     vm.stopPrank();
 
-    uint256 lowMaxUsdgIn = _computeMaxUsdgIn(COLLATERAL_AMOUNT, purchaseAmount);
+    (uint256 index, uint256 purchaseAmount) = _createOrder(COLLATERAL_AMOUNT, block.timestamp + 10 minutes);
+    uint256 maxUsdgIn = _maxUsdgIn(purchaseAmount);
 
-    // The live pool demands roughly twice the approved input; the transfer inside the swap callback
-    // exceeds the scoped approval and the whole fill unwinds
+    // The keeper is willing to overpay ten times over; the vault is not. The pool's real draw exceeds the
+    // scoped approval inside the swap callback and the whole fill unwinds.
     vm.startPrank(keeper);
     vm.expectRevert();
-    ufVault.fillOrder(index, new uint256[](0), SWAP_ROUTER02_ADDRESS, _swapCalldata(COLLATERAL_AMOUNT, lowMaxUsdgIn));
+    ufVault.fillOrder(index, new uint256[](0), SWAP_ROUTER02_ADDRESS, _swapCalldata(COLLATERAL_AMOUNT, maxUsdgIn * 10));
     vm.stopPrank();
 
-    // The order is untouched and remains fillable
+    // Nothing left the vault and the order is still open
     assertEq(orderPool.orders(index).mortgageParams.collateral, NVDA_ADDRESS, "Order should remain open");
-  }
-
-  function test_fork_fillOrder_staleFeedFailsClosed() public {
-    if (!forkEnabled) {
-      vm.skip(true);
-    }
-
-    // A long-lived order so the order outlives the feed's maxAge
-    vm.startPrank(admin);
-    orderPool.setMaximumOrderDuration(30 days);
-    vm.stopPrank();
-    (uint256 index, uint256 purchaseAmount) = _createOrder(COLLATERAL_AMOUNT, block.timestamp + 8 days);
-    uint256 maxUsdgIn = _computeMaxUsdgIn(COLLATERAL_AMOUNT, purchaseAmount);
-
-    // Past maxAge the real feed reads as stale and the adapter's revert propagates through the vault
-    (,,, uint256 updatedAt,) = nvdaChainlinkOracle.aggregator().latestRoundData();
-    uint256 warpTo = block.timestamp + FEED_MAX_AGE + 1 hours;
-    vm.warp(warpTo);
-    vm.startPrank(keeper);
-    vm.expectRevert(abi.encodeWithSelector(ChainlinkPriceOracle.StalePrice.selector, warpTo - updatedAt, FEED_MAX_AGE));
-    ufVault.fillOrder(index, new uint256[](0), SWAP_ROUTER02_ADDRESS, _swapCalldata(COLLATERAL_AMOUNT, maxUsdgIn));
-    vm.stopPrank();
+    assertEq(usdg.balanceOf(address(ufVault)), 0, "Vault should hold no USDG after the failed fill");
+    assertEq(nvda.balanceOf(address(ufVault)), 0, "Vault should hold no collateral after the failed fill");
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -548,7 +485,7 @@ contract UniswapFulfillmentVaultForkTest is BaseTest {
     vm.stopPrank();
 
     (uint256 index, uint256 purchaseAmount) = _createOrder(COLLATERAL_AMOUNT, block.timestamp + 10 minutes);
-    uint256 maxUsdgIn = _computeMaxUsdgIn(COLLATERAL_AMOUNT, purchaseAmount);
+    uint256 maxUsdgIn = _maxUsdgIn(purchaseAmount);
 
     // The router pays through Permit2, where the vault holds no allowance: Permit2 rejects the pull
     vm.startPrank(keeper);
@@ -568,7 +505,7 @@ contract UniswapFulfillmentVaultForkTest is BaseTest {
     assertTrue(ufVault.routerApproval(UNIVERSAL_ROUTER_ADDRESS) == RouterApproval.Permit2);
 
     (uint256 index, uint256 purchaseAmount) = _createOrder(COLLATERAL_AMOUNT, block.timestamp + 10 minutes);
-    uint256 maxUsdgIn = _computeMaxUsdgIn(COLLATERAL_AMOUNT, purchaseAmount);
+    uint256 maxUsdgIn = _maxUsdgIn(purchaseAmount);
     uint256 usdxBefore = usdx.balanceOf(address(ufVault));
 
     vm.expectEmit(true, true, false, false);
@@ -598,7 +535,7 @@ contract UniswapFulfillmentVaultForkTest is BaseTest {
 
     (uint256 index, uint256 purchaseAmount) =
       _createOrderFor(SPY_ADDRESS, address(spySubConsol), SPY_COLLATERAL_AMOUNT, block.timestamp + 10 minutes);
-    uint256 maxUsdgIn = _computeMaxUsdgInFor(SPY_ADDRESS, SPY_COLLATERAL_AMOUNT, purchaseAmount);
+    uint256 maxUsdgIn = _maxUsdgIn(purchaseAmount);
     uint256 usdxBefore = usdx.balanceOf(address(ufVault));
     uint256 poolManagerUsdgBefore = usdg.balanceOf(POOL_MANAGER_ADDRESS);
 
@@ -626,7 +563,7 @@ contract UniswapFulfillmentVaultForkTest is BaseTest {
 
     (uint256 index, uint256 purchaseAmount) =
       _createOrderFor(SPY_ADDRESS, address(spySubConsol), SPY_COLLATERAL_AMOUNT, block.timestamp + 10 minutes);
-    uint256 maxUsdgIn = _computeMaxUsdgInFor(SPY_ADDRESS, SPY_COLLATERAL_AMOUNT, purchaseAmount);
+    uint256 maxUsdgIn = _maxUsdgIn(purchaseAmount);
 
     // SETTLE_ALL pays through Permit2 as well, so a plain approval cannot settle the v4 swap either
     vm.startPrank(keeper);

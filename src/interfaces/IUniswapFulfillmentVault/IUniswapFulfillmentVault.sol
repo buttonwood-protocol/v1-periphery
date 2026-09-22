@@ -7,18 +7,6 @@ import {IUniswapFulfillmentVaultErrors} from "./IUniswapFulfillmentVaultErrors.s
 import {RouterApproval} from "./RouterApproval.sol";
 
 /**
- * @notice The oracle-anchored fill bounds for a collateral
- * @param priceOracle The price oracle anchoring the route (IPriceOracle, 18-decimal cost)
- * @param maxPremiumBps The maximum execution premium over the oracle cost, in basis points
- * @param maxFillCost The per-fill cap in oracle terms (18 decimals). Zero disables the route.
- */
-struct CollateralRoute {
-  address priceOracle;
-  uint16 maxPremiumBps;
-  uint256 maxFillCost;
-}
-
-/**
  * @title IUniswapFulfillmentVault
  * @author @SocksNFlops
  * @notice Interface for UniswapFulfillmentVault, a vault that fulfills purchase orders atomically by swapping USDG for collateral on an allowlisted on-chain venue.
@@ -49,13 +37,6 @@ interface IUniswapFulfillmentVault is ILiquidityVault, IUniswapFulfillmentVaultE
   function usdg() external view returns (address);
 
   /**
-   * @notice Gets the route configured for a collateral
-   * @param collateral The address of the collateral token
-   * @return The collateral route. A zero maxFillCost means the route is disabled.
-   */
-  function collateralRoute(address collateral) external view returns (CollateralRoute memory);
-
-  /**
    * @notice Gets the address of the Permit2 contract used for Permit2-mode routers
    * @return The address of the Permit2 contract
    */
@@ -76,13 +57,6 @@ interface IUniswapFulfillmentVault is ILiquidityVault, IUniswapFulfillmentVaultE
   function isAllowedRouter(address router) external view returns (bool);
 
   /**
-   * @notice Sets the route for a collateral. Setting a zero maxFillCost disables the route.
-   * @param collateral The address of the collateral token
-   * @param route The route to set
-   */
-  function setCollateralRoute(address collateral, CollateralRoute calldata route) external;
-
-  /**
    * @notice Sets the approval mode a swap router is allowed under. None disallows the router.
    * @param router The address of the router
    * @param approval The approval mode for the router
@@ -100,7 +74,7 @@ interface IUniswapFulfillmentVault is ILiquidityVault, IUniswapFulfillmentVaultE
    * @param index The index of the order to fill
    * @param hintPrevIds The hint prev ids for the relevant mortgage queues
    * @param router The allowlisted router to execute the swap calldata against
-   * @param swapCalldata The pre-encoded swap call. The vault enforces oracle-anchored balance-delta invariants around it.
+   * @param swapCalldata The pre-encoded swap call. The vault enforces balance-delta invariants around it.
    */
   function fillOrder(uint256 index, uint256[] calldata hintPrevIds, address router, bytes calldata swapCalldata)
     external;
