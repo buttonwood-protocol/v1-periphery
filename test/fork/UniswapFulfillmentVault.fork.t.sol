@@ -91,16 +91,19 @@ struct V4ExactOutputSingleParams {
 }
 
 /**
- * @title UniswapFulfillmentVaultForkTest
- * @notice End-to-end fills against live Robinhood Chain (4663) state: real USDG, real NVDA and SPY, the real
- *         Chainlink feeds through the ChainlinkPriceOracle adapter, the real SwapRouter02 (ERC20 mode), and the
- *         real Universal Router with Permit2 (Permit2 mode) over v3 and v4 pools.
+ * @title UniswapFulfillmentVaultForkFixture
+ * @notice The live Robinhood Chain (4663) stack the fork tests fill against: real USDG, real NVDA and SPY, the
+ *         real Chainlink feeds through the ChainlinkPriceOracle adapter, the real SwapRouter02 (ERC20 mode), and
+ *         both real Universal Routers (2.1.1 and 2.1.2) with Permit2 (Permit2 mode) over v3 and v4 pools.
  * @dev Network-gated: the default suite skips these tests so CI stays network-free. Run with
- *      `RUN_FORK_TESTS=true forge test --match-path test/fork/UniswapFulfillmentVault.fork.t.sol`
+ *      `RUN_FORK_TESTS=true forge test --match-path test/fork/UniswapFulfillmentVault.fork.t.sol`.
+ *      Each concrete suite pins its own fork block: the routers under test must be deployed at it.
  */
-contract UniswapFulfillmentVaultForkTest is BaseTest {
+abstract contract UniswapFulfillmentVaultForkFixture is BaseTest {
   string constant FORK_URL = "https://robinhood.drpc.org";
   uint256 constant FORK_BLOCK = 63753466; // 2026-09-15, pinned for reproducibility
+  // Universal Router 2.1.2 was deployed at block 65727895; 2.1.1 fills are proven at both blocks
+  uint256 constant FORK_BLOCK_212 = 69200000; // 2026-09-22, pinned for reproducibility
 
   // Live 4663 addresses
   address constant USDG_ADDRESS = 0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168; // 6 decimals
@@ -111,7 +114,10 @@ contract UniswapFulfillmentVaultForkTest is BaseTest {
   address constant SWAP_ROUTER02_ADDRESS = 0xCaf681a66D020601342297493863E78C959E5cb2;
   address constant NVDA_USDG_V3_POOL = 0xd4EB21209C4D6093f80B5b84f5C45cc093EA14a3; // 0.05% fee tier
   uint24 constant NVDA_POOL_FEE = 500;
+  // Universal Router 2.1.1; reachable from the Trading API with x-universal-router-version: 2.1.1
   address constant UNIVERSAL_ROUTER_ADDRESS = 0x8876789976dEcBfCbBbe364623C63652db8C0904;
+  // Universal Router 2.1.2; the Trading API's default target on this chain. Same 2.1 calldata layout
+  address constant UNIVERSAL_ROUTER_212_ADDRESS = 0x204FAca1764B154221e35c0d20aBb3c525710498;
   address constant PERMIT2_ADDRESS = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
   address constant POOL_MANAGER_ADDRESS = 0x8366a39CC670B4001A1121B8F6A443A643e40951;
   address constant STATE_VIEW_ADDRESS = 0xF3334192D15450CdD385c8B70e03f9A6bD9E673b;
@@ -152,12 +158,15 @@ contract UniswapFulfillmentVaultForkTest is BaseTest {
 
   bool internal forkEnabled;
 
+  /// @dev The block this suite forks at
+  function _forkBlock() internal pure virtual returns (uint256);
+
   function setUp() public {
     forkEnabled = vm.envOr("RUN_FORK_TESTS", false);
     if (!forkEnabled) {
       return;
     }
-    vm.createSelectFork(FORK_URL, FORK_BLOCK);
+    vm.createSelectFork(FORK_URL, _forkBlock());
 
     // Pool phases anchor to the current daily epoch start, which lies in the past. Size the deposit
     // phase so it is still open now and the deploy phase starts two hours from the fork timestamp,
@@ -195,11 +204,12 @@ contract UniswapFulfillmentVaultForkTest is BaseTest {
     (nvdaSubConsol, nvdaChainlinkOracle) = _listCollateral(NVDA_ADDRESS, NVDA_FEED_ADDRESS, "NVDA");
     (spySubConsol, spyChainlinkOracle) = _listCollateral(SPY_ADDRESS, SPY_FEED_ADDRESS, "SPY");
 
-    // Vault with the real SwapRouter02 (plain ERC20 pull) and the real Universal Router (Permit2 pull)
+    // Vault with the real SwapRouter02 (plain ERC20 pull) and both real Universal Routers (Permit2 pull)
     UniswapFulfillmentVault implementation = new UniswapFulfillmentVault();
-    RouterConfig[] memory routers = new RouterConfig[](2);
+    RouterConfig[] memory routers = new RouterConfig[](3);
     routers[0] = RouterConfig({router: SWAP_ROUTER02_ADDRESS, approval: RouterApproval.ERC20});
     routers[1] = RouterConfig({router: UNIVERSAL_ROUTER_ADDRESS, approval: RouterApproval.Permit2});
+    routers[2] = RouterConfig({router: UNIVERSAL_ROUTER_212_ADDRESS, approval: RouterApproval.Permit2});
     ERC1967Proxy proxy = new ERC1967Proxy(
       address(implementation),
       abi.encodeCall(
@@ -444,6 +454,29 @@ contract UniswapFulfillmentVaultForkTest is BaseTest {
     assertLe(expiration, block.timestamp, "No live Permit2 expiration for the router");
   }
 
+  /// @dev True when the 20 bytes of `needle` appear in the account's runtime code, as a constructor
+  ///      argument stored in an immutable does
+  function _codeEmbeds(address account, address needle) internal view returns (bool) {
+    bytes memory code = account.code;
+    bytes20 target = bytes20(needle);
+    if (code.length < 20) {
+      return false;
+    }
+    for (uint256 i = 0; i + 20 <= code.length; i++) {
+      bool matched = true;
+      for (uint256 j = 0; j < 20; j++) {
+        if (code[i + j] != target[j]) {
+          matched = false;
+          break;
+        }
+      }
+      if (matched) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /// @dev Asserts the post-fill end state shared by every successful fill
   function _assertFilledCleanly(IERC20 collateral, uint256 usdxBefore) internal view {
     assertEq(mortgageNFT.ownerOf(1), borrower, "Borrower should have received the mortgage nft");
@@ -452,6 +485,16 @@ contract UniswapFulfillmentVaultForkTest is BaseTest {
     assertEq(collateral.balanceOf(address(ufVault)), 0, "Vault should hold no collateral after the fill");
     assertEq(ufVault.totalAssets(), usdx.balanceOf(address(ufVault)), "Total assets should be the USDX balance");
     assertEq(keeper.balance, GAS_FEE, "Keeper should have received the gas fee");
+  }
+}
+
+/**
+ * @title UniswapFulfillmentVaultForkTest
+ * @notice Fills through SwapRouter02 and Universal Router 2.1.1 at the original pinned block.
+ */
+contract UniswapFulfillmentVaultForkTest is UniswapFulfillmentVaultForkFixture {
+  function _forkBlock() internal pure override returns (uint256) {
+    return FORK_BLOCK;
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -663,5 +706,98 @@ contract UniswapFulfillmentVaultForkTest is BaseTest {
     vm.expectRevert(abi.encodeWithSignature("AllowanceExpired(uint256)", grantedAt));
     permit2.transferFrom(address(ufVault), rando, 1e6, USDG_ADDRESS);
     vm.stopPrank();
+  }
+}
+
+/**
+ * @title UniswapFulfillmentVault212ForkTest
+ * @notice Fills through Universal Router 2.1.2, the Trading API's default target on 4663, at a block where it
+ *         is deployed. The encodings are the ones the 2.1.1 tests use: the 2.1 releases share the layout.
+ */
+contract UniswapFulfillmentVault212ForkTest is UniswapFulfillmentVaultForkFixture {
+  function _forkBlock() internal pure override returns (uint256) {
+    return FORK_BLOCK_212;
+  }
+
+  function test_fork_universalRouter212_isDeployedAndPermit2Backed() public {
+    if (!forkEnabled) {
+      vm.skip(true);
+    }
+
+    assertGt(UNIVERSAL_ROUTER_212_ADDRESS.code.length, 0, "Universal Router 2.1.2 should be deployed");
+    assertTrue(_codeEmbeds(UNIVERSAL_ROUTER_212_ADDRESS, PERMIT2_ADDRESS), "2.1.2 should embed Permit2");
+    assertTrue(_codeEmbeds(UNIVERSAL_ROUTER_ADDRESS, PERMIT2_ADDRESS), "2.1.1 should embed Permit2");
+    assertTrue(
+      UNIVERSAL_ROUTER_212_ADDRESS != UNIVERSAL_ROUTER_ADDRESS, "2.1.2 should be a distinct deployment from 2.1.1"
+    );
+  }
+
+  function test_fork_fillOrder_universalRouter212V3_permit2() public {
+    if (!forkEnabled) {
+      vm.skip(true);
+    }
+    assertTrue(ufVault.routerApproval(UNIVERSAL_ROUTER_212_ADDRESS) == RouterApproval.Permit2);
+
+    (uint256 index, uint256 purchaseAmount) = _createOrder(COLLATERAL_AMOUNT, block.timestamp + 10 minutes);
+    uint256 maxUsdgIn = _computeMaxUsdgIn(COLLATERAL_AMOUNT, purchaseAmount);
+    uint256 usdxBefore = usdx.balanceOf(address(ufVault));
+
+    // The same 2.1 encoding the 2.1.1 test uses, sent to 2.1.2
+    vm.expectEmit(true, true, false, false);
+    emit IUniswapFulfillmentVaultEvents.OrderFilled(index, NVDA_ADDRESS, COLLATERAL_AMOUNT, 0, 0);
+    vm.startPrank(keeper);
+    ufVault.fillOrder(
+      index, new uint256[](0), UNIVERSAL_ROUTER_212_ADDRESS, _urV3ExactOutCalldata(COLLATERAL_AMOUNT, maxUsdgIn)
+    );
+    vm.stopPrank();
+
+    _assertFilledCleanly(nvda, usdxBefore);
+    _assertNoStandingAllowance(UNIVERSAL_ROUTER_212_ADDRESS);
+  }
+
+  function test_fork_fillOrder_universalRouter212V4_permit2() public {
+    if (!forkEnabled) {
+      vm.skip(true);
+    }
+
+    (uint256 index, uint256 purchaseAmount) =
+      _createOrderFor(SPY_ADDRESS, address(spySubConsol), SPY_COLLATERAL_AMOUNT, block.timestamp + 10 minutes);
+    uint256 maxUsdgIn = _computeMaxUsdgInFor(SPY_ADDRESS, SPY_COLLATERAL_AMOUNT, purchaseAmount);
+    uint256 usdxBefore = usdx.balanceOf(address(ufVault));
+    uint256 poolManagerUsdgBefore = usdg.balanceOf(POOL_MANAGER_ADDRESS);
+
+    vm.expectEmit(true, true, false, false);
+    emit IUniswapFulfillmentVaultEvents.OrderFilled(index, SPY_ADDRESS, SPY_COLLATERAL_AMOUNT, 0, 0);
+    vm.startPrank(keeper);
+    ufVault.fillOrder(
+      index, new uint256[](0), UNIVERSAL_ROUTER_212_ADDRESS, _urV4ExactOutCalldata(SPY_COLLATERAL_AMOUNT, maxUsdgIn)
+    );
+    vm.stopPrank();
+
+    assertGt(usdg.balanceOf(POOL_MANAGER_ADDRESS), poolManagerUsdgBefore, "USDG should settle into the PoolManager");
+    _assertFilledCleanly(spy, usdxBefore);
+    _assertNoStandingAllowance(UNIVERSAL_ROUTER_212_ADDRESS);
+  }
+
+  /// @dev 2.1.2 pins a v4-periphery that reverts an under-filled v4 exact output instead of settling it
+  function test_fork_fillOrder_universalRouter212V4_revertsWhenUnfillable() public {
+    if (!forkEnabled) {
+      vm.skip(true);
+    }
+
+    (uint256 index, uint256 purchaseAmount) =
+      _createOrderFor(SPY_ADDRESS, address(spySubConsol), SPY_COLLATERAL_AMOUNT, block.timestamp + 10 minutes);
+    uint256 maxUsdgIn = _computeMaxUsdgInFor(SPY_ADDRESS, SPY_COLLATERAL_AMOUNT, purchaseAmount);
+
+    // One wei of USDG cannot buy the collateral, so the swap cannot fill and the whole fill unwinds
+    vm.startPrank(keeper);
+    vm.expectRevert();
+    ufVault.fillOrder(
+      index, new uint256[](0), UNIVERSAL_ROUTER_212_ADDRESS, _urV4ExactOutCalldata(SPY_COLLATERAL_AMOUNT, 1)
+    );
+    vm.stopPrank();
+
+    assertGt(maxUsdgIn, 1, "The real bound should be far above the unfillable input");
+    assertEq(orderPool.orders(index).mortgageParams.collateral, SPY_ADDRESS, "Order should remain open");
   }
 }

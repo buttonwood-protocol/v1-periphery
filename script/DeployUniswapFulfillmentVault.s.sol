@@ -98,6 +98,10 @@ contract DeployUniswapFulfillmentVaultScript is BaseScript {
     // Post-deploy grants executed by the maintainer: the order pool's FULFILLMENT_ROLE and USDX's
     // IGNORE_CAP_ROLE (for the leftover-USDG redeposit) both go to the vault, then per-collateral
     // setCollateralRoute and approveAssetToOrderPool calls.
+    //
+    // On Robinhood Chain (4663) the allowlist carries both Universal Router deployments in PERMIT2
+    // mode — 0x204FAca1764B154221e35c0d20aBb3c525710498 (2.1.2, the Trading API's default target) and
+    // 0x8876789976dEcBfCbBbe364623C63652db8C0904 (2.1.1) — so the keeper can fill through either.
   }
 
   function logUniswapFulfillmentVault(string memory objectKey) public returns (string memory json) {
