@@ -77,8 +77,10 @@ contract DeployAllUniswapScriptTest is BaseTest {
 
   function test_run_deploysStackAndWritesAddresses() public {
     vm.chainId(TEST_CHAIN_ID);
+    // The chain's address book may already be committed; put it back afterwards
     string memory path = _addressesPath();
-    assertFalse(vm.isFile(path));
+    bool hadFile = vm.isFile(path);
+    string memory priorJson = hadFile ? vm.readFile(path) : "";
 
     script.run();
 
@@ -119,6 +121,10 @@ contract DeployAllUniswapScriptTest is BaseTest {
     assertEq(vm.parseJsonAddress(json, ".routerAddress"), router);
     assertEq(vm.parseJsonAddress(json, ".rolloverVaultAddress"), address(rolloverVault));
     assertEq(vm.parseJsonAddress(json, ".fulfillmentVaultAddress"), address(vault));
-    vm.removeFile(path);
+    if (hadFile) {
+      vm.writeFile(path, priorJson);
+    } else {
+      vm.removeFile(path);
+    }
   }
 }
