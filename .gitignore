@@ -18,6 +18,10 @@ coverage/
 /broadcast/*/31337/
 /broadcast/**/dry-run/
 
+# Forge-test address fixtures; only the per-chain books are tracked
+/addresses/tests/*
+!/addresses/tests/.gitkeep
+
 # Docs
 docs/
 
