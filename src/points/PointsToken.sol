@@ -98,26 +98,33 @@ contract PointsToken is IPointsToken, AccessControlUpgradeable, UUPSUpgradeable,
 
   /**
    * @notice Always reverts: points cannot be transferred
+   * @param to The would-be receiver
+   * @param value The would-be amount
    * @return Never returns
    */
-  function transfer(address, uint256) public pure override returns (bool) {
-    revert TransfersDisabled();
+  function transfer(address to, uint256 value) public view override returns (bool) {
+    revert TransfersDisabled(_msgSender(), to, value);
   }
 
   /**
    * @notice Always reverts: points cannot be transferred
+   * @param from The would-be sender
+   * @param to The would-be receiver
+   * @param value The would-be amount
    * @return Never returns
    */
-  function transferFrom(address, address, uint256) public pure override returns (bool) {
-    revert TransfersDisabled();
+  function transferFrom(address from, address to, uint256 value) public pure override returns (bool) {
+    revert TransfersDisabled(from, to, value);
   }
 
   /**
    * @notice Always reverts: points have no allowances
+   * @param spender The would-be spender
+   * @param value The would-be allowance
    * @return Never returns
    */
-  function approve(address, uint256) public pure override returns (bool) {
-    revert ApprovalsDisabled();
+  function approve(address spender, uint256 value) public view override returns (bool) {
+    revert ApprovalsDisabled(_msgSender(), spender, value);
   }
 
   /**
@@ -128,7 +135,7 @@ contract PointsToken is IPointsToken, AccessControlUpgradeable, UUPSUpgradeable,
    */
   function _update(address from, address to, uint256 value) internal override {
     if (from != address(0) && to != address(0)) {
-      revert TransfersDisabled();
+      revert TransfersDisabled(from, to, value);
     }
     super._update(from, to, value);
   }

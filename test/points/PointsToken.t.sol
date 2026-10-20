@@ -18,6 +18,12 @@ contract PointsTokenV2 is PointsToken {
   }
 }
 
+contract PointsTokenUpdateHarness is PointsToken {
+  function update(address from, address to, uint256 value) external {
+    _update(from, to, value);
+  }
+}
+
 contract PointsTokenHandler is Test {
   PointsToken internal token;
   address internal minter;
@@ -236,7 +242,7 @@ contract PointsTokenTest is Test {
     vm.assume(from != address(0));
     vm.prank(minter);
     token.mint(from, balance);
-    vm.expectRevert(IPointsTokenErrors.TransfersDisabled.selector);
+    vm.expectRevert(abi.encodeWithSelector(IPointsTokenErrors.TransfersDisabled.selector, from, to, amount));
     vm.prank(from);
     token.transfer(to, amount);
     assertEq(token.balanceOf(from), balance);
@@ -247,7 +253,7 @@ contract PointsTokenTest is Test {
       vm.prank(minter);
       token.mint(from, amount);
     }
-    vm.expectRevert(IPointsTokenErrors.TransfersDisabled.selector);
+    vm.expectRevert(abi.encodeWithSelector(IPointsTokenErrors.TransfersDisabled.selector, from, to, amount));
     vm.prank(caller);
     token.transferFrom(from, to, amount);
   }
@@ -255,18 +261,31 @@ contract PointsTokenTest is Test {
   function test_transfer_revertsEvenForTheAdminAndMinter() public {
     vm.prank(minter);
     token.mint(admin, 5);
-    vm.expectRevert(IPointsTokenErrors.TransfersDisabled.selector);
+    vm.expectRevert(abi.encodeWithSelector(IPointsTokenErrors.TransfersDisabled.selector, admin, alice, 5));
     vm.prank(admin);
     token.transfer(alice, 5);
     vm.prank(minter);
     token.mint(minter, 5);
-    vm.expectRevert(IPointsTokenErrors.TransfersDisabled.selector);
+    vm.expectRevert(abi.encodeWithSelector(IPointsTokenErrors.TransfersDisabled.selector, minter, alice, 5));
     vm.prank(minter);
     token.transfer(alice, 5);
   }
 
+  function test_update_rejectsMovesBetweenNonZeroAddresses(address from, address to, uint256 value) public {
+    vm.assume(from != address(0) && to != address(0));
+    PointsTokenUpdateHarness implementation = new PointsTokenUpdateHarness();
+    vm.prank(admin);
+    token.upgradeToAndCall(address(implementation), "");
+    PointsTokenUpdateHarness harness = PointsTokenUpdateHarness(address(token));
+    vm.expectRevert(abi.encodeWithSelector(IPointsTokenErrors.TransfersDisabled.selector, from, to, value));
+    harness.update(from, to, value);
+    harness.update(address(0), from, 7);
+    harness.update(from, address(0), 7);
+    assertEq(token.balanceOf(from), 0);
+  }
+
   function test_approve_alwaysReverts(address owner, address spender, uint256 amount) public {
-    vm.expectRevert(IPointsTokenErrors.ApprovalsDisabled.selector);
+    vm.expectRevert(abi.encodeWithSelector(IPointsTokenErrors.ApprovalsDisabled.selector, owner, spender, amount));
     vm.prank(owner);
     token.approve(spender, amount);
     assertEq(token.allowance(owner, spender), 0);
@@ -322,7 +341,7 @@ contract PointsTokenTest is Test {
     assertEq(token.decimals(), 18);
     assertEq(token.name(), "Buttonwood Points");
     assertTrue(token.hasRole(token.MINTER_ROLE(), minter));
-    vm.expectRevert(IPointsTokenErrors.TransfersDisabled.selector);
+    vm.expectRevert(abi.encodeWithSelector(IPointsTokenErrors.TransfersDisabled.selector, alice, bob, 1));
     vm.prank(alice);
     token.transfer(bob, 1);
   }
