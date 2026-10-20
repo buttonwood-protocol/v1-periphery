@@ -367,13 +367,30 @@ contract PointsMinterTest is PointsBase {
     assertEq(minter.earned(alice).borrowPoints, 1_000 * POINT);
   }
 
-  function test_creditBorrow_afterGenesisDoesNotCountTowardTiers() public {
+  function test_creditBorrow_originatedAfterGenesisDoesNotCountTowardTiers(uint256 creditDelay) public {
+    creditDelay = bound(creditDelay, 0, 60 days);
     vm.warp(GENESIS_CLOSE);
     uint256 tokenId = newLoan(alice, 2_000e18);
+    vm.warp(block.timestamp + creditDelay);
     minter.creditBorrow(tokenId);
     WalletRecord memory r = minter.earned(alice);
     assertEq(r.borrowPoints, 2_000 * POINT);
     assertEq(r.genesisBorrowPoints, 0);
+  }
+
+  function test_creditBorrow_originatedBeforeGenesisCountsWhenCreditedAfter(uint256 creditDelay) public {
+    creditDelay = bound(creditDelay, 1, 60 days);
+    register(alice);
+    vm.warp(GENESIS_CLOSE - 1);
+    uint256 tokenId = newLoan(alice, 5_000e18);
+    vm.warp(GENESIS_CLOSE + creditDelay);
+    // the multiplier is still the one at mint time: tier 0 plus the first-N bonus
+    assertEq(minter.creditBorrow(tokenId), 5_250 * POINT);
+    WalletRecord memory r = minter.earned(alice);
+    assertEq(r.genesisBorrowPoints, 5_000 * POINT);
+    (, uint256 borrowTier) = minter.tierOf(alice);
+    assertEq(borrowTier, 2);
+    assertEq(minter.multiplier(alice), 11_500);
   }
 
   function test_creditBorrow_revertsWhenPaused() public {
@@ -556,13 +573,35 @@ contract PointsMinterTest is PointsBase {
     assertEq(minter.lendDay(0).total, 7 * POINT);
   }
 
-  function test_creditLend_afterGenesisDoesNotCountTowardTiers() public {
-    vm.warp(GENESIS_CLOSE);
-    creditLendOne(5, alice, 2_000 * POINT);
+  function test_creditLend_dayStartingAtOrAfterGenesisDoesNotCountTowardTiers(uint256 day) public {
+    // day 30 starts exactly at genesis close
+    day = bound(day, 30, 89);
+    vm.warp(dayEnd(89));
+    creditLendOne(day, alice, 2_000 * POINT);
     assertEq(minter.earned(alice).depositPoints, 2_000 * POINT);
     assertEq(minter.earned(alice).genesisDepositPoints, 0);
     (uint256 depositTier,) = minter.tierOf(alice);
     assertEq(depositTier, 0);
+  }
+
+  function test_creditLend_lastGenesisDayCreditedAfterCloseRaisesTier(uint256 creditDelay) public {
+    creditDelay = bound(creditDelay, 0, 60 days);
+    register(alice);
+    // day 29 is the last day starting before genesis close; it ends exactly at the close
+    assertEq(dayEnd(29), GENESIS_CLOSE);
+    vm.warp(GENESIS_CLOSE + creditDelay);
+    vm.expectEmit(true, true, false, true, address(minter));
+    emit IPointsMinterEvents.LendCredited(29, alice, 1_000 * POINT, 1_050 * POINT, 10_500);
+    creditLendOne(29, alice, 1_000 * POINT);
+    assertEq(minter.earned(alice).genesisDepositPoints, 1_000 * POINT);
+    (uint256 depositTier,) = minter.tierOf(alice);
+    assertEq(depositTier, 1);
+    assertEq(minter.multiplier(alice), 11_000);
+    // a later, post-genesis day pays the new tier but does not add to it
+    vm.warp(dayEnd(30));
+    creditLendOne(30, alice, 100 * POINT);
+    assertEq(token.balanceOf(alice), 1_050 * POINT + 110 * POINT);
+    assertEq(minter.earned(alice).genesisDepositPoints, 1_000 * POINT);
   }
 
   function test_creditLend_zeroAssetsAllowsOnlyZero() public {

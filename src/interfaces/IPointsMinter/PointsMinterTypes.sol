@@ -9,7 +9,7 @@ pragma solidity ^0.8.20;
  * @param attestationSigner The signer of registration attestations
  * @param programStart Timestamp the program starts; lend day 0 begins here. Cannot change once reached.
  * @param programEnd Timestamp the program ends (exclusive)
- * @param genesisCloseAt Points credited before this timestamp count toward tiers
+ * @param genesisCloseAt Loans originated and lend days starting before this timestamp count toward tiers
  * @param lendToleranceBps Allowance above totalAssets / 7 for NAV drift, in basis points
  * @param firstNBonusBps Bonus for whitelist numbers 1..firstN, in basis points
  * @param firstN The highest whitelist number that earns the first-N bonus
@@ -40,8 +40,8 @@ struct PointsMinterConfig {
  * @param blocked Whether the wallet is blocked from all credits
  * @param depositPoints Base points credited from lending
  * @param borrowPoints Base points credited from borrowing, never above the borrow clip
- * @param genesisDepositPoints Base lend points credited before genesis close (the deposit tier input)
- * @param genesisBorrowPoints Base borrow points credited before genesis close (the borrow tier input)
+ * @param genesisDepositPoints Base lend points for days starting before genesis close (the deposit tier input)
+ * @param genesisBorrowPoints Base borrow points for loans originated before genesis close (the borrow tier input)
  */
 struct WalletRecord {
   uint64 whitelistNumber;

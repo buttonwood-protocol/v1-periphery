@@ -23,7 +23,8 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
  * @notice Registers wallets and mints PointsToken. Borrow credits are read from the LoanManager (one per loan, clipped
  * per wallet); lend credits are submitted per day by LEND_CREDITOR_ROLE and bounded by the RolloverVault's total
  * assets / 7. Every mint is base points times the wallet's multiplier at that moment, computed before the credit is
- * recorded, so boosters never apply retroactively. Tiers read only points credited before genesis close.
+ * recorded, so boosters never apply retroactively. Tiers read only points for activity before genesis close: loans
+ * originated before it and lend days that start before it, whenever they are credited.
  */
 contract PointsMinter is
   IPointsMinter,
@@ -165,7 +166,7 @@ contract PointsMinter is
     uint256 points = Math.min(Math.mulDiv(position.amountBorrowed, $._pointUnit, USD_UNIT), room);
     uint256 multiplierBps = multiplier(wallet);
     record.borrowPoints += points;
-    if (block.timestamp < c.genesisCloseAt) record.genesisBorrowPoints += points;
+    if (position.dateOriginated < c.genesisCloseAt) record.genesisBorrowPoints += points;
     minted = _mint(wallet, points, multiplierBps);
     emit BorrowCredited(tokenId, wallet, position.amountBorrowed, points, minted, multiplierBps);
   }
@@ -191,7 +192,7 @@ contract PointsMinter is
     }
 
     uint256 total = lend.total;
-    bool genesis = block.timestamp < c.genesisCloseAt;
+    bool genesis = uint256(c.programStart) + day * 1 days < c.genesisCloseAt;
     for (uint256 i = 0; i < users.length; i++) {
       total += _creditLend($, day, users[i], points[i], genesis);
     }
@@ -291,7 +292,7 @@ contract PointsMinter is
    * @param day The day index
    * @param wallet The wallet
    * @param points The base points
-   * @param genesis Whether the credit counts toward tiers
+   * @param genesis Whether the day starts before genesis close, so the credit counts toward tiers
    * @return counted The base points counted toward the day's total
    */
   function _creditLend(PointsMinterStorage storage $, uint256 day, address wallet, uint256 points, bool genesis)
