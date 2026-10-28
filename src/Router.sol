@@ -395,15 +395,12 @@ contract Router is
   }
 
   /**
-   * @inheritdoc IRouter
+   * @dev Internal function to deposit into an origination pool and forward the receipt tokens to the sender
+   * @param originationPool The origination pool to deposit into
+   * @param usdToken The address of the usdToken to pull in
+   * @param usdxAmount The amount of USDX to deposit
    */
-  function originationPoolDeposit(OPoolConfigId oPoolConfigId, address usdToken, uint256 usdTokenAmount) external {
-    // Convert the usdTokenAmount to USDX
-    uint256 usdxAmount = convert(usdToken, usdx, usdTokenAmount);
-
-    // Fetch the origination pool
-    IOriginationPool originationPool = _getOrCreateOriginationPool(oPoolConfigId);
-
+  function _originationPoolDeposit(IOriginationPool originationPool, address usdToken, uint256 usdxAmount) private {
     // Pull in the usdToken from the user
     _pullUsdToken(usdToken, usdxAmount);
 
@@ -413,6 +410,33 @@ contract Router is
 
     // Transfer the originationPool receipt tokens to the user
     originationPool.transfer(msg.sender, originationPool.balanceOf(address(this)));
+  }
+
+  /**
+   * @inheritdoc IRouter
+   */
+  function originationPoolDeposit(OPoolConfigId oPoolConfigId, address usdToken, uint256 usdTokenAmount) external {
+    // Convert the usdTokenAmount to USDX
+    uint256 usdxAmount = convert(usdToken, usdx, usdTokenAmount);
+
+    // Fetch the origination pool
+    IOriginationPool originationPool = _getOrCreateOriginationPool(oPoolConfigId);
+
+    _originationPoolDeposit(originationPool, usdToken, usdxAmount);
+  }
+
+  /**
+   * @inheritdoc IRouter
+   */
+  function originationPoolDepositTo(address originationPool, address usdToken, uint256 usdTokenAmount) external {
+    if (!IOriginationPoolScheduler(originationPoolScheduler).isRegistered(originationPool)) {
+      revert OriginationPoolNotRegistered(originationPool);
+    }
+
+    // Convert the usdTokenAmount to USDX
+    uint256 usdxAmount = convert(usdToken, usdx, usdTokenAmount);
+
+    _originationPoolDeposit(IOriginationPool(originationPool), usdToken, usdxAmount);
   }
 
   /**

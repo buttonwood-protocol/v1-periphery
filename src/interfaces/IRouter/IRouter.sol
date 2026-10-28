@@ -159,6 +159,18 @@ interface IRouter is IRouterErrors {
   function originationPoolDeposit(OPoolConfigId oPoolConfigId, address usdToken, uint256 usdTokenAmount) external;
 
   /**
+   * @notice Deposit into a specific origination pool registered with the OriginationPoolScheduler
+   * @dev Unlike `originationPoolDeposit`, this does not resolve or deploy a pool from a config, so it can reach a
+   * pool whose config has since been removed or whose deployment epoch has ended, as long as the pool is still in its
+   * deposit phase.
+   * Reverts with `OriginationPoolNotRegistered` if the pool is not registered with the OriginationPoolScheduler.
+   * @param originationPool The address of the origination pool to deposit into
+   * @param usdToken The address of the usdToken to pull in
+   * @param usdTokenAmount The amount of usdToken to pull in
+   */
+  function originationPoolDepositTo(address originationPool, address usdToken, uint256 usdTokenAmount) external;
+
+  /**
    * @notice Quotes the amount of output token that would be received for a given amount of input token
    * @param inputToken The address of the input token
    * @param outputToken The address of the output token

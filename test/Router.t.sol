@@ -23,7 +23,7 @@ import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol"
 import {CreationRequest, BaseRequest} from "@core/types/orders/OrderRequests.sol";
 import {OriginationPoolConfig} from "@core/types/OriginationPoolConfig.sol";
 import {OPoolConfigIdLibrary, OPoolConfigId} from "@core/types/OPoolConfigId.sol";
-import {IOriginationPool} from "@core/interfaces/IOriginationPool/IOriginationPool.sol";
+import {IOriginationPool, IOriginationPoolErrors} from "@core/interfaces/IOriginationPool/IOriginationPool.sol";
 import {IInterestRateOracle} from "@core/interfaces/IInterestRateOracle.sol";
 import {MockInterestRateOracle} from "./mocks/MockInterestRateOracle.sol";
 import {IPriceOracle} from "@core/interfaces/IPriceOracle.sol";
@@ -40,6 +40,10 @@ import {IConversionQueue} from "@core/interfaces/IConversionQueue/IConversionQue
 import {ConversionQueue} from "@core/ConversionQueue.sol";
 import {MockSimpleOracle} from "./mocks/MockSimpleOracle.sol";
 import {IRouterErrors} from "../src/interfaces/IRouter/IRouterErrors.sol";
+import {
+  IOriginationPoolSchedulerErrors
+} from "@core/interfaces/IOriginationPoolScheduler/IOriginationPoolSchedulerErrors.sol";
+import {OriginationPoolPhase} from "@core/types/enums/OriginationPoolPhase.sol";
 
 contract RouterTest is BaseTest {
   using OPoolConfigIdLibrary for OPoolConfigId;
@@ -619,5 +623,138 @@ contract RouterTest is BaseTest {
     router.requestMortgage{value: 0.01e18}(address(usdt), creationRequest, false, 2576e18);
     vm.stopPrank();
     assertEq(mortgageNFT.ownerOf(1), borrower, "Borrower should own the mortgage NFT");
+  }
+
+  function _fundLenderUsdt(uint256 usdtAmount) internal {
+    deal(address(usdt), lender, usdtAmount);
+    vm.startPrank(lender);
+    usdt.approve(address(router), usdtAmount);
+    vm.stopPrank();
+  }
+
+  function _fundLenderUsdx(uint256 usdxAmount) internal {
+    uint256 usdtAmount = usdx.convertUnderlying(address(usdt), usdxAmount);
+    deal(address(usdt), lender, usdtAmount);
+    vm.startPrank(lender);
+    usdt.approve(address(usdx), usdtAmount);
+    usdx.deposit(address(usdt), usdtAmount);
+    usdx.approve(address(router), usdxAmount);
+    vm.stopPrank();
+  }
+
+  function test_originationPoolDeposit_usdToken() public {
+    _fundLenderUsdt(100_000e6);
+
+    vm.startPrank(lender);
+    router.originationPoolDeposit(originationPoolScheduler.configIdAt(0), address(usdt), 100_000e6);
+    vm.stopPrank();
+
+    assertEq(originationPool.balanceOf(lender), 100_000e18, "Lender should hold the receipt tokens");
+    assertEq(usdx.balanceOf(address(originationPool)), 100_000e18, "Origination pool should hold the USDX");
+    assertEq(originationPool.balanceOf(address(router)), 0, "Router should not keep receipt tokens");
+  }
+
+  function test_originationPoolDepositTo_usdx() public {
+    _fundLenderUsdx(50_000e18);
+
+    vm.startPrank(lender);
+    router.originationPoolDepositTo(address(originationPool), address(usdx), 50_000e18);
+    vm.stopPrank();
+
+    assertEq(originationPool.balanceOf(lender), 50_000e18, "Lender should hold the receipt tokens");
+    assertEq(usdx.balanceOf(address(originationPool)), 50_000e18, "Origination pool should hold the USDX");
+    assertEq(usdx.balanceOf(lender), 0, "Lender should have spent all USDX");
+    assertEq(originationPool.balanceOf(address(router)), 0, "Router should not keep receipt tokens");
+    assertEq(usdx.balanceOf(address(router)), 0, "Router should not keep USDX");
+  }
+
+  function test_originationPoolDepositTo_usdToken() public {
+    _fundLenderUsdt(100_000e6);
+
+    vm.startPrank(lender);
+    router.originationPoolDepositTo(address(originationPool), address(usdt), 100_000e6);
+    vm.stopPrank();
+
+    assertEq(originationPool.balanceOf(lender), 100_000e18, "Lender should hold the receipt tokens");
+    assertEq(usdx.balanceOf(address(originationPool)), 100_000e18, "Origination pool should hold the USDX");
+    assertEq(usdt.balanceOf(lender), 0, "Lender should have spent all USDT");
+    assertEq(originationPool.balanceOf(address(router)), 0, "Router should not keep receipt tokens");
+    assertEq(usdx.balanceOf(address(router)), 0, "Router should not keep USDX");
+  }
+
+  function test_originationPoolDepositTo_revertsWhenNotRegistered(address notPool) public {
+    vm.assume(!originationPoolScheduler.isRegistered(notPool));
+    _fundLenderUsdt(100_000e6);
+
+    vm.startPrank(lender);
+    vm.expectRevert(abi.encodeWithSelector(IRouterErrors.OriginationPoolNotRegistered.selector, notPool));
+    router.originationPoolDepositTo(notPool, address(usdt), 100_000e6);
+    vm.stopPrank();
+  }
+
+  function test_originationPoolDepositTo_revertsAfterDeregistration() public {
+    vm.startPrank(admin);
+    originationPoolScheduler.updateRegistration(address(originationPool), false);
+    vm.stopPrank();
+
+    _fundLenderUsdt(100_000e6);
+
+    vm.startPrank(lender);
+    vm.expectRevert(
+      abi.encodeWithSelector(IRouterErrors.OriginationPoolNotRegistered.selector, address(originationPool))
+    );
+    router.originationPoolDepositTo(address(originationPool), address(usdt), 100_000e6);
+    vm.stopPrank();
+  }
+
+  function test_originationPoolDepositTo_afterConfigRemovedAndEpochRolled() public {
+    OPoolConfigId oPoolConfigId = OPoolConfigIdLibrary.toId(originationPoolConfig);
+    uint256 deployEpoch = originationPoolScheduler.currentEpoch();
+
+    // Remove the config that deployed the pool, then move into the next epoch
+    vm.startPrank(admin);
+    originationPoolScheduler.removeConfig(originationPoolConfig);
+    vm.stopPrank();
+    vm.warp(block.timestamp + 1 days);
+    assertEq(originationPoolScheduler.currentEpoch(), deployEpoch + 1, "Should be in the next epoch");
+    assertTrue(
+      originationPool.currentPhase() == OriginationPoolPhase.DEPOSIT, "Pool should still be in the deposit phase"
+    );
+    assertTrue(originationPoolScheduler.isRegistered(address(originationPool)), "Pool should still be registered");
+
+    _fundLenderUsdt(100_000e6);
+
+    // Config-based deposit tries to deploy a new pool from the removed config
+    vm.startPrank(lender);
+    vm.expectRevert(
+      abi.encodeWithSelector(
+        IOriginationPoolSchedulerErrors.OriginationPoolConfigIdDoesNotExist.selector, oPoolConfigId
+      )
+    );
+    router.originationPoolDeposit(oPoolConfigId, address(usdt), 100_000e6);
+    vm.stopPrank();
+
+    // Pool-addressed deposit still reaches the live pool
+    vm.startPrank(lender);
+    router.originationPoolDepositTo(address(originationPool), address(usdt), 100_000e6);
+    vm.stopPrank();
+
+    assertEq(originationPool.balanceOf(lender), 100_000e18, "Lender should hold the receipt tokens");
+    assertEq(usdx.balanceOf(address(originationPool)), 100_000e18, "Origination pool should hold the USDX");
+    assertEq(originationPool.balanceOf(address(router)), 0, "Router should not keep receipt tokens");
+  }
+
+  function test_originationPoolDepositTo_revertsAfterDepositPhase() public {
+    vm.warp(originationPool.deployPhaseTimestamp());
+    _fundLenderUsdt(100_000e6);
+
+    vm.startPrank(lender);
+    vm.expectRevert(
+      abi.encodeWithSelector(
+        IOriginationPoolErrors.IncorrectPhase.selector, OriginationPoolPhase.DEPOSIT, OriginationPoolPhase.DEPLOY
+      )
+    );
+    router.originationPoolDepositTo(address(originationPool), address(usdt), 100_000e6);
+    vm.stopPrank();
   }
 }
