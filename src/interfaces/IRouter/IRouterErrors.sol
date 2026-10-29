@@ -26,4 +26,10 @@ interface IRouterErrors {
    * @notice Thrown when a price push is requested but the router has no SimpleOracle configured
    */
   error SimpleOracleNotSet();
+
+  /**
+   * @notice Thrown when the target origination pool is not registered with the OriginationPoolScheduler
+   * @param originationPool The address of the origination pool
+   */
+  error OriginationPoolNotRegistered(address originationPool);
 }
