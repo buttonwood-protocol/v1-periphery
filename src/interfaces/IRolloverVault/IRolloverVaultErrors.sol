@@ -23,4 +23,9 @@ interface IRolloverVaultErrors {
    * @param originationPool The address of the origination pool that is not being tracked
    */
   error OriginationPoolNotTracked(address originationPool);
+
+  /**
+   * @notice Thrown when shares are minted, burned, or transferred while the general manager is executing
+   */
+  error GeneralManagerExecuting();
 }
