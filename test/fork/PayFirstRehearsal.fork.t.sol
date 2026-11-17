@@ -29,6 +29,7 @@ import {
 } from "../../src/interfaces/IUniswapFulfillmentVault/IUniswapFulfillmentVaultErrors.sol";
 import {RouterApproval} from "../../src/interfaces/IUniswapFulfillmentVault/RouterApproval.sol";
 import {UniswapFulfillmentVault} from "../../src/UniswapFulfillmentVault.sol";
+import {RolloverVault} from "../../src/RolloverVault.sol";
 import {Router} from "../../src/Router.sol";
 
 /// @dev Minimal Universal Router surface for encoding the keeper's swap calldata
@@ -48,9 +49,9 @@ contract PayFirstUpgradeAtPeripherySettings is PayFirstUpgrade {
 /**
  * @title PayFirstRehearsalForkTest
  * @notice Rehearses the whole pay-first rollout against the live Robinhood Chain (4663) stack, in the order
- *         the scripts are run: core deploy, vault upgrade, core pause and cutover, vault approvals, both
+ *         the scripts are run: core deploy, core pause and cutover, both vault upgrades, vault approvals, both
  *         verifications, then a real order filled by the live vault while it holds no USDX, through the live
- *         Universal Router 2.1.2 and the NVDA/USDG v3 pool. Ends by rolling both back.
+ *         Universal Router 2.1.2 and the NVDA/USDG v3 pool. Ends by rolling the vaults and the core back.
  * @dev Network-gated: the default suite skips it. Run with
  *      `RUN_FORK_TESTS=true forge test --match-path test/fork/PayFirstRehearsal.fork.t.sol -vv`.
  *      Forks the latest block unless PAY_FIRST_FORK_BLOCK is set; the public endpoint keeps little history.
@@ -80,6 +81,7 @@ contract PayFirstRehearsalForkTest is Test {
   IGeneralManager internal generalManager;
   IOrderPool internal previousPool;
   UniswapFulfillmentVault internal vault;
+  RolloverVault internal rolloverVault;
   Router internal router;
   IUSDX internal usdx;
   IERC20 internal usdg;
@@ -107,6 +109,7 @@ contract PayFirstRehearsalForkTest is Test {
     nvda = IERC20(vm.parseJsonAddressArray(coreBook, ".collateralAddresses")[NVDA_INDEX]);
     nvdaSubConsol = vm.parseJsonAddressArray(coreBook, ".subConsolAddresses")[NVDA_INDEX];
     vault = UniswapFulfillmentVault(payable(vm.parseJsonAddress(peripheryBook, ".fulfillmentVaultAddress")));
+    rolloverVault = RolloverVault(payable(vm.parseJsonAddress(peripheryBook, ".rolloverVaultAddress")));
     router = Router(payable(vm.parseJsonAddress(peripheryBook, ".routerAddress")));
   }
 
@@ -135,15 +138,31 @@ contract PayFirstRehearsalForkTest is Test {
   }
 
   /// @dev A vault script instance as one `forge script` invocation would build it
-  function _vaultScript(address implementation, address previousImplementation)
-    internal
-    returns (PayFirstVaultUpgradeScript script)
-  {
+  function _vaultScript(
+    address implementation,
+    address previousImplementation,
+    address rolloverImplementation,
+    address previousRolloverImplementation
+  ) internal returns (PayFirstVaultUpgradeScript script) {
     script = new PayFirstVaultUpgradeScript();
     script.setAddressBookJsons(coreBook, peripheryBook);
     script.setAdmin(ADMIN);
-    script.setDeployment(implementation, previousImplementation);
+    script.setDeployment(implementation, previousImplementation, rolloverImplementation, previousRolloverImplementation);
     script.setUp();
+  }
+
+  /// @dev A lender deposits USDX into the live rollover vault
+  function _depositIntoRolloverVault(uint256 usdxAmount) internal returns (uint256 shares) {
+    uint256 usdgAmount = usdx.convertUnderlying(address(usdg), usdxAmount);
+    _dealUsdg(lender, usdgAmount);
+    uint256 sharesBefore = rolloverVault.balanceOf(lender);
+    vm.startPrank(lender);
+    usdg.approve(address(usdx), usdgAmount);
+    usdx.deposit(address(usdg), usdgAmount);
+    IERC20(address(usdx)).approve(address(rolloverVault), usdxAmount);
+    rolloverVault.deposit(address(usdx), usdxAmount);
+    vm.stopPrank();
+    shares = rolloverVault.balanceOf(lender) - sharesBefore;
   }
 
   /// @dev USDG cannot be minted, so borrow it from the deep NVDA/USDG v3 pool's balance
@@ -232,6 +251,8 @@ contract PayFirstRehearsalForkTest is Test {
   address internal vaultImplementationBefore;
   address internal coreImplementation;
   address internal vaultImplementation;
+  address internal rolloverImplementationBefore;
+  address internal rolloverImplementation;
   IOrderPool internal newPool;
 
   function _core() internal returns (PayFirstUpgrade) {
@@ -239,19 +260,22 @@ contract PayFirstRehearsalForkTest is Test {
   }
 
   function _vault() internal returns (PayFirstVaultUpgradeScript) {
-    return _vaultScript(vaultImplementation, vaultImplementationBefore);
+    return
+      _vaultScript(vaultImplementation, vaultImplementationBefore, rolloverImplementation, rolloverImplementationBefore);
   }
 
   /// @dev Steps 0-4: the live starting point, then both rollouts in the order the scripts are run
   function _rollOut() internal {
     coreImplementationBefore = _implementationOf(address(generalManager));
     vaultImplementationBefore = _implementationOf(address(vault));
+    rolloverImplementationBefore = _implementationOf(address(rolloverVault));
     assertEq(generalManager.orderPool(), address(previousPool), "live order pool matches the address book");
     assertEq(previousPool.orderCount(), 0, "no order was ever placed");
     assertEq(IERC20(address(usdx)).balanceOf(address(vault)), 0, "the live vault holds no USDX");
     assertEq(vault.totalSupply(), 0, "the live vault has no depositors");
     assertTrue(vault.routerApproval(UNIVERSAL_ROUTER_212) == RouterApproval.Permit2, "Universal Router is allowlisted");
     assertTrue(vault.hasRole(vault.KEEPER_ROLE(), ADMIN), "the admin can act as keeper");
+    console.log("Rollover vault total assets before (USDX wei): %s", rolloverVault.totalAssets());
 
     // 1. Core: deploy the implementation and the new order pool. Nothing live changes.
     PayFirstUpgrade coreDeployed = _coreScript(address(0), address(0), address(0));
@@ -261,27 +285,42 @@ contract PayFirstRehearsalForkTest is Test {
     assertEq(_implementationOf(address(generalManager)), coreImplementationBefore, "core untouched by the deploy run");
     assertEq(generalManager.orderPool(), address(previousPool), "order pool untouched by the deploy run");
 
-    // 2. Periphery: upgrade the vault. fillOrder is unchanged and the callback path is not reachable yet.
-    PayFirstVaultUpgradeScript vaultDeployed = _vaultScript(address(0), address(0));
-    vaultDeployed.run();
-    vaultImplementation = vaultDeployed.newImplementation();
-    assertEq(_implementationOf(address(vault)), vaultImplementation, "vault upgraded");
-    assertEq(
-      vaultDeployed.previousImplementation(), vaultImplementationBefore, "previous vault implementation recorded"
-    );
+    // The vault upgrades refuse to run before the core cutover
+    PayFirstVaultUpgradeScript early = _vaultScript(address(0), address(0), address(0), address(0));
+    vm.expectRevert("general manager is not upgraded; run the core cutover first");
+    early.run();
 
-    // 3. Core: pause, cut over, verify
+    // 2. Core: pause, cut over, verify
     _core().pause();
     _core().cutover();
     _core().verify();
     assertEq(generalManager.orderPool(), address(newPool), "order pool");
     assertEq(vault.orderPool(), address(newPool), "the vault follows the general manager's order pool");
 
+    // 3. Periphery: upgrade the rollover vault, then the fulfillment vault
+    PayFirstVaultUpgradeScript vaultDeployed = _vaultScript(address(0), address(0), address(0), address(0));
+    vaultDeployed.run();
+    vaultImplementation = vaultDeployed.newImplementation();
+    rolloverImplementation = vaultDeployed.newRolloverImplementation();
+    assertEq(_implementationOf(address(vault)), vaultImplementation, "vault upgraded");
+    assertEq(_implementationOf(address(rolloverVault)), rolloverImplementation, "rollover vault upgraded");
+    assertEq(
+      vaultDeployed.previousImplementation(), vaultImplementationBefore, "previous vault implementation recorded"
+    );
+    assertEq(
+      vaultDeployed.previousRolloverImplementation(),
+      rolloverImplementationBefore,
+      "previous rollover vault implementation recorded"
+    );
+
     // 4. Periphery: approve the collaterals and USDX to the new order pool, verify
     assertEq(nvda.allowance(address(vault), address(newPool)), 0, "no allowance to the new pool yet");
     _vault().approveAssets();
     _vault().verify();
     assertEq(nvda.allowance(address(vault), address(newPool)), type(uint256).max, "NVDA approved to the new pool");
+
+    // Lenders still deposit into the upgraded rollover vault
+    assertGt(_depositIntoRolloverVault(100e18), 0, "rollover vault deposits work after the upgrade");
   }
 
   /// @dev Step 5: a borrower's real order, filled by the vault while it holds no USDX
@@ -313,6 +352,7 @@ contract PayFirstRehearsalForkTest is Test {
     uint256 usdgSpent = usdg.balanceOf(NVDA_USDG_V3_POOL) - poolUsdgBefore;
     vaultUsdx = IERC20(address(usdx)).balanceOf(address(vault));
     _assertFilled(order, usdgSpent, maxUsdgIn, vaultUsdx);
+    assertGt(_depositIntoRolloverVault(100e18), 0, "rollover vault deposits work after the fill");
     assertEq(ADMIN.balance - keeperBalanceBefore, newPool.gasFee(), "the keeper collected the order gas fee");
     console.log("Zero-USDX fill of order %s", index);
     console.log("  purchase amount (USDX wei): %s", purchaseAmount);
@@ -346,13 +386,19 @@ contract PayFirstRehearsalForkTest is Test {
     assertEq(nvda.balanceOf(address(generalManager)), 0, "the general manager holds no collateral");
   }
 
-  /// @dev Step 6: the core back to the previous order pool, the vault back to its previous implementation
+  /// @dev Step 6: the vaults back to their previous implementations, then the core back to the previous order pool
   function _rollBack(uint256 vaultUsdx) internal {
+    _vault().rollback();
     _core().pause();
     _core().rollback();
-    _vault().rollback();
     assertEq(generalManager.orderPool(), address(previousPool), "back on the previous order pool");
     assertEq(_implementationOf(address(vault)), vaultImplementationBefore, "vault back on its previous implementation");
+    assertEq(
+      _implementationOf(address(rolloverVault)),
+      rolloverImplementationBefore,
+      "rollover vault back on its previous implementation"
+    );
+    assertGt(_depositIntoRolloverVault(100e18), 0, "rollover vault deposits work after the rollback");
     assertEq(vault.orderPool(), address(previousPool), "the vault follows the general manager back");
     assertEq(IERC20(address(usdx)).balanceOf(address(vault)), vaultUsdx, "the vault kept its USDX through the rollback");
     assertTrue(

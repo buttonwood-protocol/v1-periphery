@@ -11,21 +11,26 @@ import {Roles} from "@core/libraries/Roles.sol";
 import {IGeneralManager} from "@core/interfaces/IGeneralManager/IGeneralManager.sol";
 import {IOrderFulfillmentCallback} from "@core/interfaces/IOrderFulfillmentCallback.sol";
 import {UniswapFulfillmentVault} from "../src/UniswapFulfillmentVault.sol";
+import {RolloverVault} from "../src/RolloverVault.sol";
 
 /**
  * @title PayFirstVaultUpgradeScript
- * @notice Upgrades a live UniswapFulfillmentVault to the implementation that fills through the general
- *         manager's fulfillment callback, signed by ADMIN_ADDRESS_0. Entry points:
- *           run()                 deploys the implementation and upgrades the vault proxy to it. fillOrder is
- *                                 unchanged, so this can go out before the core cutover.
- *           approveAssets()       approves every collateral and USDX to the general manager's current order
- *                                 pool. Run it after the core cutover, which changes that order pool.
- *           rollback()            upgrades the vault proxy back to the previous implementation.
+ * @notice Upgrades the live RolloverVault and UniswapFulfillmentVault for fills through the general manager's
+ *         fulfillment callback, signed by ADMIN_ADDRESS_0. Run after the core cutover. Entry points:
+ *           run()            upgrades the RolloverVault (its shares freeze while the general manager is
+ *                            executing), then the UniswapFulfillmentVault (adds fillOrderWithCallback).
+ *           approveAssets()  approves every collateral and USDX to the general manager's current order pool.
+ *           rollback()       upgrades both vault proxies back to their previous implementations.
  *         verify() is read-only and never broadcasts.
- * @dev Reads both address books for the current chain. Inputs:
- *        ADMIN_ADDRESS_0                         the signer; DEFAULT_ADMIN_ROLE on the vault
- *        PAY_FIRST_VAULT_IMPLEMENTATION          logged by run(); required by verify()
- *        PAY_FIRST_VAULT_PREVIOUS_IMPLEMENTATION logged by run(); required by rollback()
+ * @dev The upgraded RolloverVault reads IGeneralManager.reentrancyGuardEntered on every share movement, which
+ *      only the new general manager implementation answers: run() refuses to start before the core cutover,
+ *      and rollback() must run before the core implementation is ever restored.
+ *      Reads both address books for the current chain. Inputs:
+ *        ADMIN_ADDRESS_0                                  the signer; DEFAULT_ADMIN_ROLE on both vaults
+ *        PAY_FIRST_VAULT_IMPLEMENTATION                   logged by run(); required by verify()
+ *        PAY_FIRST_VAULT_PREVIOUS_IMPLEMENTATION          logged by run(); required by rollback()
+ *        PAY_FIRST_ROLLOVER_VAULT_IMPLEMENTATION          logged by run(); required by verify()
+ *        PAY_FIRST_ROLLOVER_VAULT_PREVIOUS_IMPLEMENTATION logged by run(); required by rollback()
  */
 contract PayFirstVaultUpgradeScript is Script {
   /// @dev ERC-1967 implementation slot
@@ -33,7 +38,7 @@ contract PayFirstVaultUpgradeScript is Script {
   /// @dev EIP-170 runtime size limit
   uint256 internal constant MAX_RUNTIME_SIZE = 24_576;
 
-  /// @dev The vault state an upgrade must leave untouched
+  /// @dev The fulfillment vault state an upgrade must leave untouched
   struct VaultState {
     address generalManager;
     address usdx;
@@ -46,13 +51,29 @@ contract PayFirstVaultUpgradeScript is Script {
     uint8 decimals;
   }
 
+  /// @dev The rollover vault state an upgrade must leave untouched
+  struct RolloverVaultState {
+    address generalManager;
+    address usdx;
+    address consol;
+    address[] originationPools;
+    uint256 totalSupply;
+    uint256 totalAssets;
+    bool paused;
+    bool whitelistEnforced;
+    uint8 decimals;
+  }
+
   address public admin;
   UniswapFulfillmentVault public vault;
+  RolloverVault public rolloverVault;
   IGeneralManager public generalManager;
   address[] public assets;
 
   address public newImplementation;
   address public previousImplementation;
+  address public newRolloverImplementation;
+  address public previousRolloverImplementation;
 
   bool internal _deploymentPinned;
   string internal _coreAddressBookJson;
@@ -69,14 +90,21 @@ contract PayFirstVaultUpgradeScript is Script {
     _peripheryAddressBookJson = periphery;
   }
 
-  /// @notice Pins what run() deployed instead of reading the PAY_FIRST_VAULT_* variables.
-  function setDeployment(address newImplementation_, address previousImplementation_) external {
+  /// @notice Pins what run() deployed instead of reading the PAY_FIRST_*VAULT_* variables.
+  function setDeployment(
+    address newImplementation_,
+    address previousImplementation_,
+    address newRolloverImplementation_,
+    address previousRolloverImplementation_
+  ) external {
     _deploymentPinned = true;
     newImplementation = newImplementation_;
     previousImplementation = previousImplementation_;
+    newRolloverImplementation = newRolloverImplementation_;
+    previousRolloverImplementation = previousRolloverImplementation_;
   }
 
-  /// @dev The core book lives in the sibling core checkout, which is only present in the monorepo.
+  /// @dev The core book lives in the sibling core package, which is only present in the monorepo.
   function coreAddressBookPath() public view returns (string memory) {
     return string.concat(vm.projectRoot(), "/../contracts/addresses/addresses-", vm.toString(block.chainid), ".json");
   }
@@ -100,32 +128,50 @@ contract PayFirstVaultUpgradeScript is Script {
     // USDX is approved alongside the collaterals, as ConfigureUniswapFulfillment does at deploy
     assets.push(vm.parseJsonAddress(core, ".usdxAddress"));
     vault = UniswapFulfillmentVault(payable(vm.parseJsonAddress(periphery, ".fulfillmentVaultAddress")));
+    rolloverVault = RolloverVault(payable(vm.parseJsonAddress(periphery, ".rolloverVaultAddress")));
     require(vault.generalManager() == address(generalManager), "vault is wired to another general manager");
+    require(
+      rolloverVault.generalManager() == address(generalManager), "rollover vault is wired to another general manager"
+    );
 
     if (!_deploymentPinned) {
       newImplementation = vm.envOr("PAY_FIRST_VAULT_IMPLEMENTATION", address(0));
       previousImplementation = vm.envOr("PAY_FIRST_VAULT_PREVIOUS_IMPLEMENTATION", address(0));
+      newRolloverImplementation = vm.envOr("PAY_FIRST_ROLLOVER_VAULT_IMPLEMENTATION", address(0));
+      previousRolloverImplementation = vm.envOr("PAY_FIRST_ROLLOVER_VAULT_PREVIOUS_IMPLEMENTATION", address(0));
     }
   }
 
-  /// @notice Deploys the new implementation and upgrades the vault proxy to it.
+  /// @notice Deploys both implementations and upgrades the rollover vault, then the fulfillment vault.
   function run() public {
     _requireAdmin();
-    previousImplementation = _implementation();
+    _requireUpgradedGeneralManager();
+    previousImplementation = _implementationOf(address(vault));
+    previousRolloverImplementation = _implementationOf(address(rolloverVault));
     VaultState memory before = _state();
+    RolloverVaultState memory rolloverBefore = _rolloverState();
 
     vm.startBroadcast(admin);
+    newRolloverImplementation = address(new RolloverVault());
+    rolloverVault.upgradeToAndCall(newRolloverImplementation, "");
     newImplementation = address(new UniswapFulfillmentVault());
     vault.upgradeToAndCall(newImplementation, "");
     vm.stopBroadcast();
 
     _checkUpgraded();
     _requireSameState(before, _state());
-    console.log("Vault: %s", address(vault));
-    console.log("Record these, then run approveAssets() after the core cutover:");
+    _requireSameRolloverState(rolloverBefore, _rolloverState());
+    console.log("Fulfillment vault: %s", address(vault));
+    console.log("Rollover vault: %s", address(rolloverVault));
+    console.log("Record these, then run approveAssets():");
     console.log(string.concat("  PAY_FIRST_VAULT_IMPLEMENTATION=", vm.toString(newImplementation)));
     console.log(string.concat("  PAY_FIRST_VAULT_PREVIOUS_IMPLEMENTATION=", vm.toString(previousImplementation)));
-    console.log("  Vault implementation runtime size: %s", newImplementation.code.length);
+    console.log(string.concat("  PAY_FIRST_ROLLOVER_VAULT_IMPLEMENTATION=", vm.toString(newRolloverImplementation)));
+    console.log(
+      string.concat("  PAY_FIRST_ROLLOVER_VAULT_PREVIOUS_IMPLEMENTATION=", vm.toString(previousRolloverImplementation))
+    );
+    console.log("  Fulfillment vault implementation runtime size: %s", newImplementation.code.length);
+    console.log("  Rollover vault implementation runtime size: %s", newRolloverImplementation.code.length);
   }
 
   /// @notice Approves every collateral and USDX to the general manager's current order pool, skipping those already approved.
@@ -145,24 +191,40 @@ contract PayFirstVaultUpgradeScript is Script {
     console.log("Assets: %s, approvals sent: %s", assets.length, sent);
   }
 
-  /// @notice Upgrades the vault proxy back to the previous implementation.
+  /// @notice Upgrades both vault proxies back to their previous implementations, the fulfillment vault first.
   function rollback() public {
     _requireAdmin();
     require(previousImplementation.code.length != 0, "PAY_FIRST_VAULT_PREVIOUS_IMPLEMENTATION has no code");
-    require(_implementation() != previousImplementation, "vault is already on the previous implementation");
+    require(
+      previousRolloverImplementation.code.length != 0, "PAY_FIRST_ROLLOVER_VAULT_PREVIOUS_IMPLEMENTATION has no code"
+    );
     VaultState memory before = _state();
+    RolloverVaultState memory rolloverBefore = _rolloverState();
 
     vm.startBroadcast(admin);
-    vault.upgradeToAndCall(previousImplementation, "");
+    if (_implementationOf(address(vault)) != previousImplementation) {
+      vault.upgradeToAndCall(previousImplementation, "");
+    }
+    if (_implementationOf(address(rolloverVault)) != previousRolloverImplementation) {
+      rolloverVault.upgradeToAndCall(previousRolloverImplementation, "");
+    }
     vm.stopBroadcast();
 
-    require(_implementation() == previousImplementation, "previous implementation was not restored");
+    require(_implementationOf(address(vault)) == previousImplementation, "previous vault implementation not restored");
+    require(
+      _implementationOf(address(rolloverVault)) == previousRolloverImplementation,
+      "previous rollover vault implementation not restored"
+    );
     _requireSameState(before, _state());
-    console.log("Vault rolled back to implementation: %s", previousImplementation);
+    _requireSameRolloverState(rolloverBefore, _rolloverState());
+    console.log("Fulfillment vault rolled back to implementation: %s", previousImplementation);
+    console.log("Rollover vault rolled back to implementation: %s", previousRolloverImplementation);
   }
 
-  /// @notice Read-only check that the vault is upgraded and wired to the general manager's order pool. Never broadcasts.
+  /// @notice Read-only check that both vaults are upgraded and the fulfillment vault is wired to the general
+  ///         manager's order pool. Never broadcasts.
   function verify() public view {
+    _requireUpgradedGeneralManager();
     _checkUpgraded();
     _checkApprovals();
     address orderPool = generalManager.orderPool();
@@ -173,14 +235,18 @@ contract PayFirstVaultUpgradeScript is Script {
     require(
       IAccessControl(vault.usdx()).hasRole(Roles.IGNORE_CAP_ROLE, address(vault)), "vault lacks IGNORE_CAP_ROLE on USDX"
     );
-    console.log("Vault: %s", address(vault));
+    console.log("Fulfillment vault: %s", address(vault));
     console.log("  implementation: %s", newImplementation);
     console.log("  implementation runtime size: %s", newImplementation.code.length);
     console.log("  order pool: %s", orderPool);
     console.log("  assets approved: %s", assets.length);
     console.log("  USDX balance: %s", IERC20(vault.usdx()).balanceOf(address(vault)));
     console.log("  paused: %s", vault.paused());
-    console.log("Verified the pay-first vault upgrade");
+    console.log("Rollover vault: %s", address(rolloverVault));
+    console.log("  implementation: %s", newRolloverImplementation);
+    console.log("  total assets: %s", rolloverVault.totalAssets());
+    console.log("  paused: %s", rolloverVault.paused());
+    console.log("Verified the pay-first vault upgrades");
   }
 
   function assetCount() external view returns (uint256) {
@@ -189,21 +255,40 @@ contract PayFirstVaultUpgradeScript is Script {
 
   function _requireAdmin() internal view {
     require(address(vault).code.length != 0, "fulfillmentVaultAddress has no code");
+    require(address(rolloverVault).code.length != 0, "rolloverVaultAddress has no code");
     require(vault.hasRole(vault.DEFAULT_ADMIN_ROLE(), admin), "ADMIN_ADDRESS_0 lacks DEFAULT_ADMIN_ROLE on the vault");
+    require(
+      rolloverVault.hasRole(rolloverVault.DEFAULT_ADMIN_ROLE(), admin),
+      "ADMIN_ADDRESS_0 lacks DEFAULT_ADMIN_ROLE on the rollover vault"
+    );
+  }
+
+  /// @dev The upgraded rollover vault cannot move shares against a general manager that lacks this view
+  function _requireUpgradedGeneralManager() internal view {
+    try generalManager.reentrancyGuardEntered() returns (bool entered) {
+      require(!entered, "general manager reports an entered reentrancy guard");
+    } catch {
+      revert("general manager is not upgraded; run the core cutover first");
+    }
   }
 
   function _checkUpgraded() internal view {
-    require(newImplementation.code.length != 0, "PAY_FIRST_VAULT_IMPLEMENTATION has no code");
-    require(newImplementation.code.length <= MAX_RUNTIME_SIZE, "vault implementation exceeds the EIP-170 limit");
-    require(
-      IERC1822Proxiable(newImplementation).proxiableUUID() == IMPLEMENTATION_SLOT,
-      "PAY_FIRST_VAULT_IMPLEMENTATION is not a UUPS implementation"
-    );
-    require(_implementation() == newImplementation, "vault is not on the new implementation");
+    _checkImplementation(address(vault), newImplementation, "PAY_FIRST_VAULT_IMPLEMENTATION");
+    _checkImplementation(address(rolloverVault), newRolloverImplementation, "PAY_FIRST_ROLLOVER_VAULT_IMPLEMENTATION");
     require(
       IERC165(address(vault)).supportsInterface(type(IOrderFulfillmentCallback).interfaceId),
       "vault does not implement the fulfillment callback"
     );
+  }
+
+  function _checkImplementation(address proxy, address implementation, string memory name) internal view {
+    require(implementation.code.length != 0, string.concat(name, " has no code"));
+    require(implementation.code.length <= MAX_RUNTIME_SIZE, string.concat(name, " exceeds the EIP-170 limit"));
+    require(
+      IERC1822Proxiable(implementation).proxiableUUID() == IMPLEMENTATION_SLOT,
+      string.concat(name, " is not a UUPS implementation")
+    );
+    require(_implementationOf(proxy) == implementation, string.concat("proxy is not on ", name));
   }
 
   function _checkApprovals() internal view {
@@ -216,8 +301,8 @@ contract PayFirstVaultUpgradeScript is Script {
     }
   }
 
-  function _implementation() internal view returns (address) {
-    return address(uint160(uint256(vm.load(address(vault), IMPLEMENTATION_SLOT))));
+  function _implementationOf(address proxy) internal view returns (address) {
+    return address(uint160(uint256(vm.load(proxy, IMPLEMENTATION_SLOT))));
   }
 
   function _state() internal view returns (VaultState memory) {
@@ -234,7 +319,25 @@ contract PayFirstVaultUpgradeScript is Script {
     });
   }
 
+  function _rolloverState() internal view returns (RolloverVaultState memory) {
+    return RolloverVaultState({
+      generalManager: rolloverVault.generalManager(),
+      usdx: rolloverVault.usdx(),
+      consol: rolloverVault.consol(),
+      originationPools: rolloverVault.originationPools(),
+      totalSupply: rolloverVault.totalSupply(),
+      totalAssets: rolloverVault.totalAssets(),
+      paused: rolloverVault.paused(),
+      whitelistEnforced: rolloverVault.whitelistEnforced(),
+      decimals: rolloverVault.decimals()
+    });
+  }
+
   function _requireSameState(VaultState memory a, VaultState memory b) internal pure {
     require(keccak256(abi.encode(a)) == keccak256(abi.encode(b)), "vault state changed");
+  }
+
+  function _requireSameRolloverState(RolloverVaultState memory a, RolloverVaultState memory b) internal pure {
+    require(keccak256(abi.encode(a)) == keccak256(abi.encode(b)), "rollover vault state changed");
   }
 }
