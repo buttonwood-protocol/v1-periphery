@@ -30,7 +30,8 @@ fs_permissions = [
   { access = "read-write", path = "./addresses/addresses-46630.json"},
   { access = "read-write", path = "./addresses/addresses-4663.json"},
   { access = "read-write", path = "./addresses/tests/"},
-  { access = "read", path = "./test/artifacts/WHYPE9.json"}
+  { access = "read", path = "./test/artifacts/WHYPE9.json"},
+  { access = "read", path = "./lib/cash/addresses/addresses-4663.json"}
 ]
 
 [profile.coverage]

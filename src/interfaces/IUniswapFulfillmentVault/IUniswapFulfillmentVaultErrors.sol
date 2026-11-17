@@ -56,4 +56,28 @@ interface IUniswapFulfillmentVaultErrors {
    * @param permit2 The address of the Permit2 contract
    */
   error InvalidPermit2(address permit2);
+
+  /**
+   * @notice Thrown when the fulfillment callback is called by anything but the general manager
+   * @param caller The address of the caller
+   */
+  error OnlyGeneralManager(address caller);
+
+  /**
+   * @notice Thrown when the fulfillment callback does not match the fill in flight, or there is none
+   */
+  error UnexpectedFillCallback();
+
+  /**
+   * @notice Thrown when an unexpired order was processed without the fulfillment callback being executed
+   * @param index The index of the order
+   */
+  error FillCallbackNotExecuted(uint256 index);
+
+  /**
+   * @notice Thrown when a fill would leave the vault with less USDX than it started with
+   * @param usdxBefore The vault's USDX balance before the fill
+   * @param usdxAfter The vault's USDX balance after the fill
+   */
+  error FillLostUsdx(uint256 usdxBefore, uint256 usdxAfter);
 }
