@@ -31,7 +31,13 @@ import {UniswapFulfillmentVault} from "../src/UniswapFulfillmentVault.sol";
 import {Router} from "../src/Router.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockPriceOracle} from "./mocks/MockPriceOracle.sol";
-import {MockSwapRouter, MockReentrantSwapRouter} from "./mocks/MockSwapRouter.sol";
+import {
+  MockSwapRouter,
+  MockReentrantSwapRouter,
+  MockHookedSwapRouter,
+  MockVaultDepositor
+} from "./mocks/MockSwapRouter.sol";
+import {IRolloverVaultErrors} from "../src/interfaces/IRolloverVault/IRolloverVaultErrors.sol";
 import {MockPermit2, MockPermit2SwapRouter} from "./mocks/MockPermit2.sol";
 
 contract UniswapFulfillmentVaultTest is BaseTest {
@@ -1435,6 +1441,113 @@ contract UniswapFulfillmentVaultTest is BaseTest {
     );
     assertEq(usdg.balanceOf(address(vault)), 0, "Vault should hold no USDG after the fill");
     assertEq(whype.balanceOf(address(vault)), 0, "Vault should hold no collateral after the fill");
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // The rollover vault cannot be priced from inside the callback
+  // ---------------------------------------------------------------------------------------------
+
+  /// @dev The rollover vault's share of the pool, as USDX
+  function _rolloverClaim(address account) internal view returns (uint256) {
+    return rolloverVault.balanceOf(account) * rolloverVault.totalAssets() / rolloverVault.totalSupply();
+  }
+
+  /// @dev A rollover vault whose only depositor is rolled into the origination pool, a large order against
+  ///      that pool, and a third party holding USDX that a hooked route can reach mid-swap
+  function _setUpHookedFill()
+    internal
+    returns (MockHookedSwapRouter hookedRouter, MockVaultDepositor depositor, uint256 index, bytes memory swapData)
+  {
+    uint256 collateralAmount = 1_000e18;
+    setUpRolloverVault();
+    _depositUsdxInto(address(rolloverVault), user, 5_000e18);
+
+    uint256 timestamp = block.timestamp;
+    vm.warp(originationPool.deployPhaseTimestamp() - 1);
+    vm.startPrank(keeper);
+    rolloverVault.setPaused(true);
+    rolloverVault.depositOriginationPool(address(originationPool), 5_000e18);
+    rolloverVault.setPaused(false);
+    vm.stopPrank();
+    vm.warp(timestamp);
+
+    hookedRouter = new MockHookedSwapRouter();
+    vm.startPrank(admin);
+    ufVault.setRouterApproval(address(hookedRouter), RouterApproval.ERC20);
+    generalManager.setMaximumCap(address(whype), 1e24);
+    vm.stopPrank();
+
+    depositor = new MockVaultDepositor(IERC20(address(usdx)), address(rolloverVault));
+    vm.startPrank(address(depositor));
+    uint256 usdgAmount = usdx.convertUnderlying(address(usdg), 100_000e18);
+    usdg.mint(address(depositor), usdgAmount);
+    usdg.approve(address(usdx), usdgAmount);
+    usdx.deposit(address(usdg), usdgAmount);
+    vm.stopPrank();
+
+    (index,) = _createOrder(collateralAmount);
+    _seedRouterWhype(address(hookedRouter), collateralAmount);
+    swapData = abi.encodeCall(
+      MockHookedSwapRouter.swap, (IERC20(address(usdg)), 50_000e6, IERC20(address(whype)), collateralAmount)
+    );
+  }
+
+  /// @dev Wraps USDG into USDX and deposits it into a vault from the given account
+  function _depositUsdxInto(address vault, address account, uint256 usdxAmount) internal {
+    vm.startPrank(account);
+    uint256 usdgAmount = usdx.convertUnderlying(address(usdg), usdxAmount);
+    usdg.mint(account, usdgAmount);
+    usdg.approve(address(usdx), usdgAmount);
+    usdx.deposit(address(usdg), usdgAmount);
+    usdx.approve(vault, usdxAmount);
+    ILiquidityVault(vault).deposit(address(usdx), usdxAmount);
+    vm.stopPrank();
+  }
+
+  function test_fillOrderWithCallback_rolloverVaultRejectsDepositsMidSwap() public {
+    (MockHookedSwapRouter hookedRouter, MockVaultDepositor depositor, uint256 index, bytes memory swapData) =
+      _setUpHookedFill();
+
+    // Mid-swap the origination pool has lent its USDX and holds no Consol for it yet, so the rollover
+    // vault's total assets are understated. A deposit priced there would dilute the existing depositor.
+    hookedRouter.setHook(address(depositor), abi.encodeCall(MockVaultDepositor.depositAll, ()));
+    vm.startPrank(keeper);
+    vm.expectRevert(IRolloverVaultErrors.GeneralManagerExecuting.selector);
+    ufVault.fillOrderWithCallback(index, new uint256[](0), address(hookedRouter), swapData);
+    vm.stopPrank();
+  }
+
+  function test_fillOrderWithCallback_rolloverVaultRejectsRedeemsAndTransfersMidSwap() public {
+    (MockHookedSwapRouter hookedRouter,, uint256 index, bytes memory swapData) = _setUpHookedFill();
+
+    // The existing depositor has approved the router's hook target to move its shares
+    vm.startPrank(user);
+    rolloverVault.approve(address(hookedRouter), type(uint256).max);
+    vm.stopPrank();
+    hookedRouter.setHook(address(rolloverVault), abi.encodeCall(IERC20.transferFrom, (user, address(hookedRouter), 1)));
+    vm.startPrank(keeper);
+    vm.expectRevert(IRolloverVaultErrors.GeneralManagerExecuting.selector);
+    ufVault.fillOrderWithCallback(index, new uint256[](0), address(hookedRouter), swapData);
+    vm.stopPrank();
+  }
+
+  function test_fillOrderWithCallback_rolloverVaultDepositorsKeepTheirClaimAcrossAFill() public {
+    (MockHookedSwapRouter hookedRouter, MockVaultDepositor depositor, uint256 index, bytes memory swapData) =
+      _setUpHookedFill();
+    uint256 claimBefore = _rolloverClaim(user);
+
+    // A deposit before the fill is priced fairly, and the fill then pays the pool its fee
+    depositor.depositAll();
+    vm.startPrank(keeper);
+    ufVault.fillOrderWithCallback(index, new uint256[](0), address(hookedRouter), swapData);
+    vm.stopPrank();
+
+    assertGe(_rolloverClaim(user), claimBefore, "The existing depositor should not be diluted");
+    assertFalse(generalManager.reentrancyGuardEntered(), "The guard should be released after the fill");
+
+    // Deposits work again once the fill is over
+    _depositUsdxInto(address(rolloverVault), rando, 10e18);
+    assertGt(rolloverVault.balanceOf(rando), 0, "Deposits should work after the fill");
   }
 
   /// @dev Asserts a vault holds no USDG allowance to the router, to Permit2, or inside Permit2 for the router
