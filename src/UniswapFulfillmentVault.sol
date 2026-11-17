@@ -14,6 +14,7 @@ import {IUSDX} from "@core/interfaces/IUSDX/IUSDX.sol";
 import {IOrderPool} from "@core/interfaces/IOrderPool/IOrderPool.sol";
 import {IGeneralManager} from "@core/interfaces/IGeneralManager/IGeneralManager.sol";
 import {PurchaseOrder} from "@core/types/orders/PurchaseOrder.sol";
+import {IOrderFulfillmentCallback} from "@core/interfaces/IOrderFulfillmentCallback.sol";
 
 /**
  * @title IAllowanceTransfer
@@ -40,8 +41,15 @@ interface IAllowanceTransfer {
  *         The vault never constructs swaps; safety comes from the invariants, not the route. The spend bound
  *         is the order's own purchase amount, which the general manager priced at order creation and pays
  *         back to the vault on fulfillment, so a fill can never cost the vault more than it returns.
+ *         fillOrder buys the collateral out of the vault's own USDX. fillOrderWithCallback needs no USDX: the
+ *         general manager advances the purchase amount and the vault buys and delivers inside its callback.
  */
-contract UniswapFulfillmentVault is LiquidityVault, ReentrancyGuardUpgradeable, IUniswapFulfillmentVault {
+contract UniswapFulfillmentVault is
+  LiquidityVault,
+  ReentrancyGuardUpgradeable,
+  IUniswapFulfillmentVault,
+  IOrderFulfillmentCallback
+{
   using Math for uint256;
   using SafeCast for uint256;
   using SafeERC20 for IERC20;
@@ -58,6 +66,8 @@ contract UniswapFulfillmentVault is LiquidityVault, ReentrancyGuardUpgradeable, 
    * @param _usdg The address of the USDG token (the USDX supported token used for the swap leg)
    * @param _permit2 The address of the Permit2 contract used for Permit2-mode routers
    * @param _routerApprovals The swap router allowlist, keyed by approval mode (None is not allowed)
+   * @param _pendingFill The commitment to the callback fill in flight, zero when there is none
+   * @param _pendingUsdgSpent The USDG consumed by the callback of the fill in flight
    */
   struct UniswapFulfillmentVaultStorage {
     address _generalManager;
@@ -65,6 +75,8 @@ contract UniswapFulfillmentVault is LiquidityVault, ReentrancyGuardUpgradeable, 
     address _usdg;
     address _permit2;
     mapping(address router => RouterApproval approval) _routerApprovals;
+    bytes32 _pendingFill;
+    uint256 _pendingUsdgSpent;
   }
 
   /**
@@ -175,7 +187,8 @@ contract UniswapFulfillmentVault is LiquidityVault, ReentrancyGuardUpgradeable, 
 
   /// @inheritdoc IERC165
   function supportsInterface(bytes4 interfaceId) public view override(LiquidityVault) returns (bool) {
-    return super.supportsInterface(interfaceId) || interfaceId == type(IUniswapFulfillmentVault).interfaceId;
+    return super.supportsInterface(interfaceId) || interfaceId == type(IUniswapFulfillmentVault).interfaceId
+      || interfaceId == type(IOrderFulfillmentCallback).interfaceId;
   }
 
   /// @inheritdoc LiquidityVault
@@ -300,6 +313,128 @@ contract UniswapFulfillmentVault is LiquidityVault, ReentrancyGuardUpgradeable, 
     (bool success,) = _msgSender().call{value: address(this).balance}("");
     if (!success) {
       revert FailedToWithdrawNativeGas(address(this).balance);
+    }
+  }
+
+  /// @inheritdoc IUniswapFulfillmentVault
+  function fillOrderWithCallback(
+    uint256 index,
+    uint256[] calldata hintPrevIds,
+    address router,
+    bytes calldata swapCalldata
+  ) external override onlyRole(KEEPER_ROLE) whenNotPaused nonReentrant {
+    UniswapFulfillmentVaultStorage storage $ = _getUniswapFulfillmentVaultStorage();
+
+    PurchaseOrder memory order = IOrderPool(orderPool()).orders(index);
+    address collateral = order.mortgageParams.collateral;
+    if (collateral == address(0)) {
+      revert OrderAlreadyProcessed(index);
+    }
+
+    bool expired = order.expiration < block.timestamp;
+    uint256 collateralNeeded = order.mortgageParams.collateralAmount - order.orderAmounts.collateralCollected;
+    bytes memory fulfillerData = abi.encodePacked(router, swapCalldata);
+    if (!expired) {
+      if (collateralNeeded > 0 && $._routerApprovals[router] == RouterApproval.None) {
+        revert RouterNotAllowed(router);
+      }
+      // Commit to this fill so the callback only ever executes the order and route the keeper submitted
+      $._pendingFill = keccak256(abi.encode(order.mortgageParams.tokenId, collateral, collateralNeeded, fulfillerData));
+    }
+
+    // The order pool has the general manager advance the purchase amount, call orderFulfillmentCallback,
+    // and pay the remainder (plus the order's native gas fee) once the mortgage exists
+    uint256 usdxBefore = IERC20($._usdx).balanceOf(address(this));
+    _processOrderWithCallback(index, hintPrevIds, fulfillerData);
+
+    if (expired) {
+      emit OrderExpiredSwept(index);
+    } else {
+      _settleCallbackFill(index, collateral, collateralNeeded, usdxBefore);
+    }
+
+    // Send collected fees to the keeper by sending the native balance
+    (bool success,) = _msgSender().call{value: address(this).balance}("");
+    if (!success) {
+      revert FailedToWithdrawNativeGas(address(this).balance);
+    }
+  }
+
+  /**
+   * @dev Processes a single order through the order pool's callback path
+   * @param index The index of the order to process
+   * @param hintPrevIds The hint prev ids for the relevant mortgage queues
+   * @param fulfillerData The data the general manager passes back to orderFulfillmentCallback
+   */
+  function _processOrderWithCallback(uint256 index, uint256[] calldata hintPrevIds, bytes memory fulfillerData)
+    internal
+  {
+    uint256[] memory indices = new uint256[](1);
+    indices[0] = index;
+    uint256[][] memory hintPrevIdsList = new uint256[][](1);
+    hintPrevIdsList[0] = hintPrevIds;
+    bytes[] memory fulfillerDataList = new bytes[](1);
+    fulfillerDataList[0] = fulfillerData;
+    IOrderPool(orderPool()).processOrdersWithCallback(indices, hintPrevIdsList, fulfillerDataList);
+  }
+
+  /**
+   * @dev Checks that the callback of a fill ran and that the fill did not cost the vault USDX, then reports it
+   * @param index The index of the filled order
+   * @param collateral The address of the collateral token
+   * @param collateralNeeded The amount of collateral the order required
+   * @param usdxBefore The vault's USDX balance before the fill
+   */
+  function _settleCallbackFill(uint256 index, address collateral, uint256 collateralNeeded, uint256 usdxBefore)
+    internal
+  {
+    UniswapFulfillmentVaultStorage storage $ = _getUniswapFulfillmentVaultStorage();
+
+    // The callback clears the commitment; a fill that never reached it must not pass
+    if ($._pendingFill != bytes32(0)) {
+      revert FillCallbackNotExecuted(index);
+    }
+    uint256 usdgSpent = $._pendingUsdgSpent;
+    delete $._pendingUsdgSpent;
+
+    // A fill never leaves the vault with less USDX than it started with
+    uint256 usdxAfter = IERC20($._usdx).balanceOf(address(this));
+    if (usdxAfter < usdxBefore) {
+      revert FillLostUsdx(usdxBefore, usdxAfter);
+    }
+    (uint256 numerator, uint256 denominator) = IUSDX($._usdx).tokenScalars($._usdg);
+    emit OrderFilled(
+      index, collateral, collateralNeeded, usdgSpent, usdxAfter - usdxBefore + usdgSpent.mulDiv(numerator, denominator)
+    );
+  }
+
+  /// @inheritdoc IOrderFulfillmentCallback
+  /// @dev Not nonReentrant: it runs inside fillOrderWithCallback, which holds the guard. The commitment check
+  ///      makes it unreachable outside that fill and single-use within it.
+  function orderFulfillmentCallback(
+    uint256 tokenId,
+    address collateral,
+    uint256 collateralAmount,
+    uint256 usdxAmount,
+    bytes calldata data
+  ) external override {
+    UniswapFulfillmentVaultStorage storage $ = _getUniswapFulfillmentVaultStorage();
+    if (_msgSender() != $._generalManager) {
+      revert OnlyGeneralManager(_msgSender());
+    }
+    bytes32 pendingFill = $._pendingFill;
+    if (pendingFill == bytes32(0) || pendingFill != keccak256(abi.encode(tokenId, collateral, collateralAmount, data)))
+    {
+      revert UnexpectedFillCallback();
+    }
+    delete $._pendingFill;
+
+    if (collateralAmount > 0) {
+      // The advance is the spend bound: the swap may not consume more USDX than the general manager just paid
+      uint256 maxUsdgIn = _withdrawBoundedSwapInput(usdxAmount);
+      $._pendingUsdgSpent =
+        _executeSwap(collateral, collateralAmount, maxUsdgIn, address(bytes20(data[:20])), data[20:]);
+      IERC20(collateral).safeTransfer(_msgSender(), collateralAmount);
     }
   }
 

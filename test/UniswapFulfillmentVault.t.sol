@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 /// forge-lint: disable-next-line(unused-import)
 import {BaseTest, console} from "./BaseTest.t.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
@@ -16,6 +17,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {USDX} from "@core/USDX.sol";
 import {Roles} from "@core/libraries/Roles.sol";
 import {CreationRequest, BaseRequest} from "@core/types/orders/OrderRequests.sol";
+import {IOrderPool} from "@core/interfaces/IOrderPool/IOrderPool.sol";
 import {ILiquidityVault} from "../src/interfaces/ILiquidityVault/ILiquidityVault.sol";
 import {IUniswapFulfillmentVault} from "../src/interfaces/IUniswapFulfillmentVault/IUniswapFulfillmentVault.sol";
 import {
@@ -1004,5 +1006,442 @@ contract UniswapFulfillmentVaultTest is BaseTest {
       2,
       "Vault USDX should reflect exactly the scalar-converted spend and the purchase amount received"
     );
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Callback fills: the general manager advances the purchase amount, the vault needs no USDX
+  // ---------------------------------------------------------------------------------------------
+
+  // The advance is the purchase amount less the general manager's holdback, floored to USDG units
+  uint256 MAX_USDG_IN_CALLBACK = 5_049_999_999;
+
+  /// @dev Deploys a vault that holds no USDX, no USDG, and no collateral
+  function _deployEmptyVault() internal returns (UniswapFulfillmentVault vault) {
+    vault = _deployVault(address(usdg));
+    assertEq(usdx.balanceOf(address(vault)), 0, "Vault should start with no USDX");
+    assertEq(vault.totalSupply(), 0, "Vault should start with no shares");
+  }
+
+  function _fillWithCallback(UniswapFulfillmentVault vault, address routerAddress, uint256 index, uint256 amountIn)
+    internal
+  {
+    vm.startPrank(keeper);
+    vault.fillOrderWithCallback(index, new uint256[](0), routerAddress, _swapData(amountIn, COLLATERAL_AMOUNT));
+    vm.stopPrank();
+  }
+
+  function test_fillOrderWithCallback_revertsWhenDoesNotHaveKeeperRole(address caller, uint256 index) public {
+    vm.assume(!ufVault.hasRole(ufVault.KEEPER_ROLE(), caller));
+    vm.startPrank(caller);
+    vm.expectRevert(
+      abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, caller, ufVault.KEEPER_ROLE())
+    );
+    ufVault.fillOrderWithCallback(index, new uint256[](0), address(swapRouter), "");
+    vm.stopPrank();
+  }
+
+  function test_fillOrderWithCallback_revertsWhenPaused(uint256 index) public {
+    vm.startPrank(keeper);
+    ufVault.setPaused(true);
+    vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
+    ufVault.fillOrderWithCallback(index, new uint256[](0), address(swapRouter), "");
+    vm.stopPrank();
+  }
+
+  function test_fillOrderWithCallback_revertsOnNonexistentOrder(uint256 index) public {
+    vm.startPrank(keeper);
+    vm.expectRevert(abi.encodeWithSelector(IUniswapFulfillmentVaultErrors.OrderAlreadyProcessed.selector, index));
+    ufVault.fillOrderWithCallback(index, new uint256[](0), address(swapRouter), "");
+    vm.stopPrank();
+  }
+
+  function test_fillOrderWithCallback_zeroUsdxVault() public {
+    UniswapFulfillmentVault vault = _deployEmptyVault();
+    (uint256 index, uint256 purchaseAmount) = _createOrder(COLLATERAL_AMOUNT);
+    _seedRouterWhype(address(swapRouter), COLLATERAL_AMOUNT);
+    uint256 amountIn = 5_000e6;
+
+    vm.expectEmit(true, true, false, false);
+    emit IUniswapFulfillmentVaultEvents.OrderFilled(index, address(whype), COLLATERAL_AMOUNT, amountIn, purchaseAmount);
+    _fillWithCallback(vault, address(swapRouter), index, amountIn);
+
+    // Borrower has the mortgage, bought entirely with the advance
+    assertEq(mortgageNFT.ownerOf(1), borrower, "Borrower should have received the mortgage nft");
+    assertEq(swapRouter.callCount(), 1, "The router should have been called once");
+
+    // The vault keeps the purchase amount less what the swap cost, and nothing else
+    assertApproxEqAbs(
+      usdx.balanceOf(address(vault)), purchaseAmount - amountIn * 1e12, 2, "Vault USDX should be the fill margin"
+    );
+    assertEq(usdg.balanceOf(address(vault)), 0, "Vault should hold no USDG after the fill");
+    assertEq(whype.balanceOf(address(vault)), 0, "Vault should hold no collateral after the fill");
+    assertEq(usdx.balanceOf(address(generalManager)), 0, "The general manager should hold no USDX");
+    assertEq(whype.balanceOf(address(generalManager)), 0, "The general manager should hold no collateral");
+    assertEq(whype.allowance(address(vault), address(generalManager)), 0, "No collateral allowance is left behind");
+    _assertNoStandingAllowanceOf(vault, address(swapRouter));
+
+    // The keeper received the order gas fee
+    assertEq(keeper.balance, GAS_FEE, "Keeper should have received the gas fee in native tokens");
+  }
+
+  function test_fillOrderWithCallback_reportsThePurchaseAmountReceived() public {
+    UniswapFulfillmentVault vault = _deployEmptyVault();
+    (uint256 index, uint256 purchaseAmount) = _createOrder(COLLATERAL_AMOUNT);
+    _seedRouterWhype(address(swapRouter), COLLATERAL_AMOUNT);
+
+    vm.recordLogs();
+    _fillWithCallback(vault, address(swapRouter), index, 5_000e6);
+    Vm.Log[] memory logs = vm.getRecordedLogs();
+
+    bool found;
+    for (uint256 i = 0; i < logs.length; i++) {
+      if (logs[i].emitter == address(vault) && logs[i].topics[0] == IUniswapFulfillmentVaultEvents.OrderFilled.selector)
+      {
+        (uint256 collateralPurchased, uint256 usdgSpent, uint256 purchaseAmountReceived) =
+          abi.decode(logs[i].data, (uint256, uint256, uint256));
+        assertEq(collateralPurchased, COLLATERAL_AMOUNT, "collateralPurchased");
+        assertEq(usdgSpent, 5_000e6, "usdgSpent");
+        assertApproxEqAbs(purchaseAmountReceived, purchaseAmount, 2, "purchaseAmountReceived");
+        found = true;
+      }
+    }
+    assertTrue(found, "OrderFilled should be emitted");
+  }
+
+  function test_fillOrderWithCallback_permit2Mode_zeroUsdxVault() public {
+    UniswapFulfillmentVault vault = _deployEmptyVault();
+    (uint256 index, uint256 purchaseAmount) = _createOrder(COLLATERAL_AMOUNT);
+    _seedRouterWhype(address(permit2Router), COLLATERAL_AMOUNT);
+
+    _fillWithCallback(vault, address(permit2Router), index, 5_000e6);
+
+    assertEq(permit2Router.callCount(), 1, "The Permit2 router should have been called once");
+    assertEq(mortgageNFT.ownerOf(1), borrower, "Borrower should have received the mortgage nft");
+    assertApproxEqAbs(
+      usdx.balanceOf(address(vault)), purchaseAmount - 5_000e6 * 1e12, 2, "Vault USDX should be the fill margin"
+    );
+    _assertNoStandingAllowanceOf(vault, address(permit2Router));
+  }
+
+  function test_fillOrderWithCallback_boundIsTheAdvance() public {
+    UniswapFulfillmentVault vault = _deployEmptyVault();
+    (uint256 index, uint256 purchaseAmount) = _createOrder(COLLATERAL_AMOUNT);
+    _seedRouterWhype(address(swapRouter), COLLATERAL_AMOUNT);
+
+    // One USDG unit over the advance starves on the scoped approval
+    vm.startPrank(keeper);
+    vm.expectRevert(
+      abi.encodeWithSelector(
+        IERC20Errors.ERC20InsufficientAllowance.selector,
+        address(swapRouter),
+        MAX_USDG_IN_CALLBACK,
+        MAX_USDG_IN_CALLBACK + 1
+      )
+    );
+    vault.fillOrderWithCallback(
+      index, new uint256[](0), address(swapRouter), _swapData(MAX_USDG_IN_CALLBACK + 1, COLLATERAL_AMOUNT)
+    );
+    vm.stopPrank();
+
+    // The whole advance is spendable; the vault ends with the unspent dust and the holdback
+    _fillWithCallback(vault, address(swapRouter), index, MAX_USDG_IN_CALLBACK);
+    assertApproxEqAbs(
+      usdx.balanceOf(address(vault)),
+      purchaseAmount - MAX_USDG_IN_CALLBACK * 1e12,
+      2,
+      "Vault USDX should be the unspent remainder"
+    );
+  }
+
+  function test_fillOrderWithCallback_cannotSpendVaultInventoryBeyondTheAdvance() public {
+    // ufVault holds depositor USDX; a callback fill still cannot spend more than the advance
+    (uint256 index,) = _createOrder(COLLATERAL_AMOUNT);
+    _seedRouterWhype(address(swapRouter), COLLATERAL_AMOUNT);
+
+    vm.startPrank(keeper);
+    vm.expectRevert(
+      abi.encodeWithSelector(
+        IERC20Errors.ERC20InsufficientAllowance.selector,
+        address(swapRouter),
+        MAX_USDG_IN_CALLBACK,
+        MAX_USDG_IN_CALLBACK + 1
+      )
+    );
+    ufVault.fillOrderWithCallback(
+      index, new uint256[](0), address(swapRouter), _swapData(MAX_USDG_IN_CALLBACK + 1, COLLATERAL_AMOUNT)
+    );
+    vm.stopPrank();
+  }
+
+  function test_fillOrderWithCallback_revertsOnOverSpent() public {
+    (uint256 index,) = _createOrder(COLLATERAL_AMOUNT);
+
+    // Misconfiguration drill, as for fillOrder: the token is allowlisted as a "router" and moves stray USDG
+    vm.startPrank(admin);
+    ufVault.setRouterApproval(address(usdg), RouterApproval.ERC20);
+    vm.stopPrank();
+    usdg.mint(address(ufVault), 100e6);
+
+    bytes memory swapCalldata = abi.encodeCall(IERC20.transfer, (rando, MAX_USDG_IN_CALLBACK + 100e6));
+    vm.startPrank(keeper);
+    vm.expectRevert(
+      abi.encodeWithSelector(
+        IUniswapFulfillmentVaultErrors.OverSpent.selector, MAX_USDG_IN_CALLBACK + 100e6, MAX_USDG_IN_CALLBACK
+      )
+    );
+    ufVault.fillOrderWithCallback(index, new uint256[](0), address(usdg), swapCalldata);
+    vm.stopPrank();
+  }
+
+  function test_fillOrderWithCallback_inventoryVaultNeverLosesUsdx() public {
+    (uint256 index, uint256 purchaseAmount) = _createOrder(COLLATERAL_AMOUNT);
+    _seedRouterWhype(address(swapRouter), COLLATERAL_AMOUNT);
+    uint256 usdxBefore = usdx.balanceOf(address(ufVault));
+    uint256 supplyBefore = ufVault.totalSupply();
+
+    _fillWithCallback(ufVault, address(swapRouter), index, 5_000e6);
+
+    assertApproxEqAbs(
+      usdx.balanceOf(address(ufVault)),
+      usdxBefore + purchaseAmount - 5_000e6 * 1e12,
+      2,
+      "Vault USDX should grow by the fill margin"
+    );
+    assertEq(ufVault.totalSupply(), supplyBefore, "Fill should not mint or burn shares");
+  }
+
+  function test_fillOrderWithCallback_revertsOnInsufficientCollateralOut() public {
+    UniswapFulfillmentVault vault = _deployEmptyVault();
+    (uint256 index,) = _createOrder(COLLATERAL_AMOUNT);
+    _seedRouterWhype(address(swapRouter), COLLATERAL_AMOUNT);
+
+    vm.startPrank(keeper);
+    vm.expectRevert(
+      abi.encodeWithSelector(
+        IUniswapFulfillmentVaultErrors.InsufficientCollateralOut.selector, COLLATERAL_AMOUNT - 1, COLLATERAL_AMOUNT
+      )
+    );
+    vault.fillOrderWithCallback(
+      index,
+      new uint256[](0),
+      address(swapRouter),
+      abi.encodeCall(
+        MockSwapRouter.swap, (IERC20(address(usdg)), 5_000e6, IERC20(address(whype)), COLLATERAL_AMOUNT - 1)
+      )
+    );
+    vm.stopPrank();
+
+    // The failed fill left nothing behind
+    assertEq(usdx.balanceOf(address(vault)), 0, "No USDX should be left in the vault");
+    assertEq(orderPool.orders(index).mortgageParams.collateral, address(whype), "The order should be intact");
+  }
+
+  function test_fillOrderWithCallback_revertsOnDisallowedRouter() public {
+    UniswapFulfillmentVault vault = _deployEmptyVault();
+    (uint256 index,) = _createOrder(COLLATERAL_AMOUNT);
+
+    vm.startPrank(keeper);
+    vm.expectRevert(abi.encodeWithSelector(IUniswapFulfillmentVaultErrors.RouterNotAllowed.selector, rando));
+    vault.fillOrderWithCallback(index, new uint256[](0), rando, _swapData(5_000e6, COLLATERAL_AMOUNT));
+    vm.stopPrank();
+  }
+
+  function test_fillOrderWithCallback_revertsOnDoubleFill() public {
+    UniswapFulfillmentVault vault = _deployEmptyVault();
+    (uint256 index,) = _createOrder(COLLATERAL_AMOUNT);
+    _seedRouterWhype(address(swapRouter), COLLATERAL_AMOUNT);
+    _fillWithCallback(vault, address(swapRouter), index, 5_000e6);
+
+    vm.startPrank(keeper);
+    vm.expectRevert(abi.encodeWithSelector(IUniswapFulfillmentVaultErrors.OrderAlreadyProcessed.selector, index));
+    vault.fillOrderWithCallback(index, new uint256[](0), address(swapRouter), _swapData(5_000e6, COLLATERAL_AMOUNT));
+    vm.stopPrank();
+  }
+
+  function test_fillOrderWithCallback_expiredOrderSweptWithoutSwapping() public {
+    UniswapFulfillmentVault vault = _deployEmptyVault();
+    (uint256 index,) = _createOrder(COLLATERAL_AMOUNT);
+    address orderOwner = orderPool.orders(index).mortgageParams.owner;
+    uint256 ownerUsdxBefore = usdx.balanceOf(orderOwner);
+    uint256 usdxCollected = orderPool.orders(index).orderAmounts.usdxCollected;
+
+    vm.warp(block.timestamp + 11 minutes);
+
+    // The sweep never validates or calls the router: a disallowed router address proves it
+    vm.startPrank(keeper);
+    vm.expectEmit(true, true, true, true);
+    emit IUniswapFulfillmentVaultEvents.OrderExpiredSwept(index);
+    vault.fillOrderWithCallback(index, new uint256[](0), rando, _swapData(5_000e6, COLLATERAL_AMOUNT));
+    vm.stopPrank();
+
+    assertEq(swapRouter.callCount(), 0, "The sweep should not perform any router calls");
+    assertEq(usdx.balanceOf(address(vault)), 0, "The sweep should not move any USDX into the vault");
+    assertApproxEqAbs(
+      usdx.balanceOf(orderOwner), ownerUsdxBefore + usdxCollected, 2, "The order owner should be refunded"
+    );
+    assertEq(keeper.balance, GAS_FEE, "Keeper should have received the gas fee for the sweep");
+
+    // The sweep leaves no commitment behind for a later callback to match
+    vm.startPrank(address(generalManager));
+    vm.expectRevert(IUniswapFulfillmentVaultErrors.UnexpectedFillCallback.selector);
+    vault.orderFulfillmentCallback(
+      1, address(whype), COLLATERAL_AMOUNT, 0, abi.encodePacked(rando, _swapData(5_000e6, COLLATERAL_AMOUNT))
+    );
+    vm.stopPrank();
+  }
+
+  function test_fillOrderWithCallback_revertsIfCallbackNeverRuns() public {
+    UniswapFulfillmentVault vault = _deployEmptyVault();
+    (uint256 index,) = _createOrder(COLLATERAL_AMOUNT);
+
+    // An order pool that reports success without the general manager ever calling back
+    vm.mockCall(address(orderPool), abi.encodeWithSelector(IOrderPool.processOrdersWithCallback.selector), "");
+    vm.startPrank(keeper);
+    vm.expectRevert(abi.encodeWithSelector(IUniswapFulfillmentVaultErrors.FillCallbackNotExecuted.selector, index));
+    vault.fillOrderWithCallback(index, new uint256[](0), address(swapRouter), _swapData(5_000e6, COLLATERAL_AMOUNT));
+    vm.stopPrank();
+  }
+
+  function test_orderFulfillmentCallback_revertsWhenNotGeneralManager(address caller) public {
+    vm.assume(caller != address(generalManager));
+    vm.startPrank(caller);
+    vm.expectRevert(abi.encodeWithSelector(IUniswapFulfillmentVaultErrors.OnlyGeneralManager.selector, caller));
+    ufVault.orderFulfillmentCallback(1, address(whype), COLLATERAL_AMOUNT, PURCHASE_AMOUNT, "");
+    vm.stopPrank();
+  }
+
+  function test_orderFulfillmentCallback_revertsWithNoFillInFlight() public {
+    // Even the general manager cannot make the vault swap outside a fill the keeper started
+    vm.startPrank(address(generalManager));
+    vm.expectRevert(IUniswapFulfillmentVaultErrors.UnexpectedFillCallback.selector);
+    ufVault.orderFulfillmentCallback(
+      1,
+      address(whype),
+      COLLATERAL_AMOUNT,
+      PURCHASE_AMOUNT,
+      abi.encodePacked(address(swapRouter), _swapData(5_000e6, COLLATERAL_AMOUNT))
+    );
+    vm.stopPrank();
+  }
+
+  function test_fillOrderWithCallback_reentrancy_fillOrderWithCallback() public {
+    (MockReentrantSwapRouter reentrantRouter, uint256 index) = _setUpReentrantRouter();
+    vm.startPrank(admin);
+    ufVault.grantRole(ufVault.KEEPER_ROLE(), address(reentrantRouter));
+    vm.stopPrank();
+    reentrantRouter.setReentryData(
+      abi.encodeCall(ufVault.fillOrderWithCallback, (index, new uint256[](0), address(reentrantRouter), ""))
+    );
+
+    vm.startPrank(keeper);
+    vm.expectRevert(ReentrancyGuardUpgradeable.ReentrancyGuardReentrantCall.selector);
+    ufVault.fillOrderWithCallback(index, new uint256[](0), address(reentrantRouter), _swapData(0, 0));
+    vm.stopPrank();
+  }
+
+  function test_fillOrderWithCallback_reentrancy_fillOrder() public {
+    (MockReentrantSwapRouter reentrantRouter, uint256 index) = _setUpReentrantRouter();
+    vm.startPrank(admin);
+    ufVault.grantRole(ufVault.KEEPER_ROLE(), address(reentrantRouter));
+    vm.stopPrank();
+    reentrantRouter.setReentryData(
+      abi.encodeCall(ufVault.fillOrder, (index, new uint256[](0), address(reentrantRouter), ""))
+    );
+
+    vm.startPrank(keeper);
+    vm.expectRevert(ReentrancyGuardUpgradeable.ReentrancyGuardReentrantCall.selector);
+    ufVault.fillOrderWithCallback(index, new uint256[](0), address(reentrantRouter), _swapData(0, 0));
+    vm.stopPrank();
+  }
+
+  function test_fillOrderWithCallback_reentrancy_deposit() public {
+    (MockReentrantSwapRouter reentrantRouter, uint256 index) = _setUpReentrantRouter();
+    reentrantRouter.setReentryData(abi.encodeCall(ILiquidityVault.deposit, (address(usdx), 0)));
+
+    vm.startPrank(keeper);
+    vm.expectRevert(ReentrancyGuardUpgradeable.ReentrancyGuardReentrantCall.selector);
+    ufVault.fillOrderWithCallback(index, new uint256[](0), address(reentrantRouter), _swapData(0, 0));
+    vm.stopPrank();
+  }
+
+  function test_fillOrderWithCallback_reentrancy_redeem() public {
+    (MockReentrantSwapRouter reentrantRouter, uint256 index) = _setUpReentrantRouter();
+    reentrantRouter.setReentryData(abi.encodeCall(ILiquidityVault.redeem, (0)));
+
+    vm.startPrank(keeper);
+    vm.expectRevert(ReentrancyGuardUpgradeable.ReentrancyGuardReentrantCall.selector);
+    ufVault.fillOrderWithCallback(index, new uint256[](0), address(reentrantRouter), _swapData(0, 0));
+    vm.stopPrank();
+  }
+
+  function test_fillOrderWithCallback_reentrancy_callback() public {
+    // The router replays the fulfillment callback mid-swap: it is not the general manager
+    (MockReentrantSwapRouter reentrantRouter, uint256 index) = _setUpReentrantRouter();
+    reentrantRouter.setReentryData(
+      abi.encodeCall(ufVault.orderFulfillmentCallback, (1, address(whype), COLLATERAL_AMOUNT, PURCHASE_AMOUNT, ""))
+    );
+
+    vm.startPrank(keeper);
+    vm.expectRevert(
+      abi.encodeWithSelector(IUniswapFulfillmentVaultErrors.OnlyGeneralManager.selector, address(reentrantRouter))
+    );
+    ufVault.fillOrderWithCallback(index, new uint256[](0), address(reentrantRouter), _swapData(0, 0));
+    vm.stopPrank();
+  }
+
+  function test_fillOrder_stillFillsFromInventory() public {
+    // The inventory path is unchanged next to the callback path, and an empty vault cannot use it
+    UniswapFulfillmentVault vault = _deployEmptyVault();
+    (uint256 index,) = _createOrder(COLLATERAL_AMOUNT);
+    _seedRouterWhype(address(swapRouter), COLLATERAL_AMOUNT);
+
+    vm.startPrank(keeper);
+    vm.expectRevert();
+    vault.fillOrder(index, new uint256[](0), address(swapRouter), _swapData(5_000e6, COLLATERAL_AMOUNT));
+    vm.stopPrank();
+
+    _fill(index, 5_000e6, COLLATERAL_AMOUNT);
+    assertEq(mortgageNFT.ownerOf(1), borrower, "Borrower should have received the mortgage nft");
+  }
+
+  function test_fillOrderWithCallback_scalarConversion_fuzz(uint256 collateralAmount, uint256 price, uint256 spendBps)
+    public
+  {
+    // Keep the oracle cost within [~$4, $9k] so the origination pool's minimum and maximum caps never bind
+    price = bound(price, 1e18, 90e18);
+    collateralAmount = bound(collateralAmount, 4e18, Math.mulDiv(9_000e18, 1e18, price));
+    spendBps = bound(spendBps, 0, 10_000);
+    MockPriceOracle(address(whypePriceOracle)).setPrice(price);
+
+    UniswapFulfillmentVault vault = _deployEmptyVault();
+    (uint256 index, uint256 purchaseAmount) = _createOrder(collateralAmount);
+    _seedRouterWhype(address(swapRouter), collateralAmount);
+
+    // Spend any share of the advance, up to all of it
+    uint256 maxUsdgIn = (purchaseAmount - 1000) / 1e12;
+    uint256 amountIn = maxUsdgIn * spendBps / 10_000;
+
+    vm.startPrank(keeper);
+    vault.fillOrderWithCallback(
+      index,
+      new uint256[](0),
+      address(swapRouter),
+      abi.encodeCall(MockSwapRouter.swap, (IERC20(address(usdg)), amountIn, IERC20(address(whype)), collateralAmount))
+    );
+    vm.stopPrank();
+
+    assertApproxEqAbs(
+      usdx.balanceOf(address(vault)), purchaseAmount - amountIn * 1e12, 2, "Vault USDX should be the fill margin"
+    );
+    assertEq(usdg.balanceOf(address(vault)), 0, "Vault should hold no USDG after the fill");
+    assertEq(whype.balanceOf(address(vault)), 0, "Vault should hold no collateral after the fill");
+  }
+
+  /// @dev Asserts a vault holds no USDG allowance to the router, to Permit2, or inside Permit2 for the router
+  function _assertNoStandingAllowanceOf(UniswapFulfillmentVault vault, address routerAddress) internal view {
+    assertEq(usdg.allowance(address(vault), routerAddress), 0, "No USDG allowance to the router");
+    assertEq(usdg.allowance(address(vault), address(permit2)), 0, "No USDG allowance to Permit2");
+    (uint160 amount,,) = permit2.allowance(address(vault), address(usdg), routerAddress);
+    assertEq(amount, 0, "No Permit2 allowance for the router");
   }
 }
