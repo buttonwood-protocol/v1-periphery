@@ -78,4 +78,18 @@ interface IUniswapFulfillmentVault is ILiquidityVault, IUniswapFulfillmentVaultE
    */
   function fillOrder(uint256 index, uint256[] calldata hintPrevIds, address router, bytes calldata swapCalldata)
     external;
+
+  /**
+   * @notice Fills an order from the order pool without spending the vault's own USDX. The general manager advances the order's purchase amount, and the vault swaps it for the order's collateral through an allowlisted router and delivers the collateral inside its fulfillment callback. Expired orders are swept (cancelled and refunded) without swapping.
+   * @param index The index of the order to fill
+   * @param hintPrevIds The hint prev ids for the relevant mortgage queues
+   * @param router The allowlisted router to execute the swap calldata against
+   * @param swapCalldata The pre-encoded swap call. The vault enforces balance-delta invariants around it.
+   */
+  function fillOrderWithCallback(
+    uint256 index,
+    uint256[] calldata hintPrevIds,
+    address router,
+    bytes calldata swapCalldata
+  ) external;
 }

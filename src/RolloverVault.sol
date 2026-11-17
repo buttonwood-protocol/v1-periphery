@@ -140,6 +140,24 @@ contract RolloverVault is LiquidityVault, IRolloverVault {
     return total;
   }
 
+  /**
+   * @dev Blocks share mints, burns, and transfers while the general manager is executing. During an
+   *      origination the origination pools have lent their USDX and not yet received their Consol, so total
+   *      assets are understated and would misprice a deposit. A general manager that does not report its
+   *      guard has no fulfiller callback, so nothing can reach the vault while it executes.
+   * @param from The address the shares are transferred from, or the zero address when minting
+   * @param to The address the shares are transferred to, or the zero address when burning
+   * @param value The amount of shares transferred
+   */
+  function _update(address from, address to, uint256 value) internal override {
+    (bool success, bytes memory result) =
+      generalManager().staticcall(abi.encodeCall(IGeneralManager.reentrancyGuardEntered, ()));
+    if (success && result.length == 32 && abi.decode(result, (uint256)) != 0) {
+      revert GeneralManagerExecuting();
+    }
+    super._update(from, to, value);
+  }
+
   /// @inheritdoc IRolloverVault
   function usdx() public view override returns (address) {
     return _getRolloverVaultStorage()._usdx;
