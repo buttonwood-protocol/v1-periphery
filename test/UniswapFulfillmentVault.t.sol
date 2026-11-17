@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 /// forge-lint: disable-next-line(unused-import)
+import {IGeneralManager} from "@core/interfaces/IGeneralManager/IGeneralManager.sol";
 import {BaseTest, console} from "./BaseTest.t.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -1529,6 +1530,22 @@ contract UniswapFulfillmentVaultTest is BaseTest {
     vm.expectRevert(IRolloverVaultErrors.GeneralManagerExecuting.selector);
     ufVault.fillOrderWithCallback(index, new uint256[](0), address(hookedRouter), swapData);
     vm.stopPrank();
+  }
+
+  function test_rolloverVault_sharesMoveWhenTheGeneralManagerDoesNotReportItsGuard() public {
+    setUpRolloverVault();
+    // A general manager implementation without the view, as before the core upgrade or after its rollback
+    vm.mockCallRevert(address(generalManager), abi.encodeCall(IGeneralManager.reentrancyGuardEntered, ()), new bytes(0));
+
+    _depositUsdxInto(address(rolloverVault), rando, 10e18);
+    uint256 shares = rolloverVault.balanceOf(rando);
+    assertGt(shares, 0, "Deposits should work");
+
+    vm.startPrank(rando);
+    rolloverVault.transfer(user, shares / 2);
+    rolloverVault.redeem(shares - shares / 2);
+    vm.stopPrank();
+    assertEq(rolloverVault.balanceOf(rando), 0, "Transfers and redemptions should work");
   }
 
   function test_fillOrderWithCallback_rolloverVaultDepositorsKeepTheirClaimAcrossAFill() public {
