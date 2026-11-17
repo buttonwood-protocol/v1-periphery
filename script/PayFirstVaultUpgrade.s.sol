@@ -23,8 +23,9 @@ import {RolloverVault} from "../src/RolloverVault.sol";
  *           rollback()       upgrades both vault proxies back to their previous implementations.
  *         verify() is read-only and never broadcasts.
  * @dev The upgraded RolloverVault reads IGeneralManager.reentrancyGuardEntered on every share movement, which
- *      only the new general manager implementation answers: run() refuses to start before the core cutover,
- *      and rollback() must run before the core implementation is ever restored.
+ *      only the new general manager implementation answers, so run() refuses to start before the core cutover.
+ *      The RolloverVault is upgraded first: the fulfillment vault must never be able to fill through the
+ *      callback while rollover vault shares can still move mid-origination.
  *      Reads both address books for the current chain. Inputs:
  *        ADMIN_ADDRESS_0                                  the signer; DEFAULT_ADMIN_ROLE on both vaults
  *        PAY_FIRST_VAULT_IMPLEMENTATION                   logged by run(); required by verify()
